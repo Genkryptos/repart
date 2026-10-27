@@ -8,7 +8,7 @@ doesn't contrast with the sheet, where the colours can't tell a hole from the pa
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -22,6 +22,7 @@ class HoleReport:
     holes: int
     carved_px: float
     skipped: str = ""
+    areas_px: list[float] = field(default_factory=list)
 
 
 def carve_holes(part: np.ndarray, image_bgr: np.ndarray, sheet: np.ndarray) -> tuple[np.ndarray, HoleReport]:
@@ -56,4 +57,5 @@ def carve_holes(part: np.ndarray, image_bgr: np.ndarray, sheet: np.ndarray) -> t
     region = cv2.dilate(holes.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
     out = part.astype(np.float32).copy()
     out[region] *= 1.0 - sheetness[region]
-    return out, HoleReport(int(keep.sum()), float((part - out).sum()))
+    areas = [float(stats[i, cv2.CC_STAT_AREA]) for i in range(1, n) if keep[i]]
+    return out, HoleReport(int(keep.sum()), float((part - out).sum()), areas_px=areas)

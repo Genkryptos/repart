@@ -28,6 +28,8 @@ class Observation:
     mask: np.ndarray  # full-frame soft part mask, 0..1
     cam: Camera
     crop: tuple[int, int, int, int] = (0, 0, 0, 0)  # x0, y0, x1, y1
+    solid_mask: np.ndarray | None = None  # SAM's mask before hole carving
+    hole_areas_mm2: list[float] = field(default_factory=list)  # carved regions, approx mm²
 
     def __post_init__(self):
         if self.crop == (0, 0, 0, 0):
@@ -45,6 +47,12 @@ class Observation:
     def image_crop(self) -> np.ndarray:
         x0, y0, x1, y1 = self.crop
         return self.image[y0:y1, x0:x1]
+
+    def without_holes(self) -> Observation:
+        """Same view, fitted against the uncarved mask (the 'holes' were printing or glare)."""
+        if self.solid_mask is None:
+            return self
+        return Observation(self.image, self.solid_mask, self.cam, self.crop, None, [])
 
     def tilt_deg(self) -> float:
         axis = self.cam.R.T @ np.array([0.0, 0.0, 1.0])

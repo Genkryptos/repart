@@ -71,6 +71,13 @@ def _pick_part(masks: list[ImageMask], corners: np.ndarray, concept: str, which:
     return max(on_sheet, key=lambda m: m.area)
 
 
+def _sheet_point(cam, part: ImageMask) -> np.ndarray:
+    """Where the part's mask centroid hits the sheet plane, mm (for a local mm-per-pixel)."""
+    x, y = part.centroid()
+    p = cam.plane_homography() @ np.array([x, y, 1.0])
+    return p[:2] / p[2]
+
+
 def observe(photo: Photo, req: PartRequest, which: str, log=print) -> tuple[Observation, dict]:
     """SAM masks + camera for one photo, with retake messages for anything unmeasurable."""
     sheets, parts = asyncio.run(_segment(photo, req))
@@ -106,13 +113,16 @@ def observe(photo: Photo, req: PartRequest, which: str, log=print) -> tuple[Obse
     part = _pick_part(parts, corners, req.concept, which)
     # SAM masks are solid; through-holes show the sheet, so carve those back out.
     mask, holes = carve_holes(part.mask, photo.image, sheet.mask)
-    obs = Observation(photo.image, mask, cam)
-    log(f"{which}: {photo.width}×{photo.height}, focal {'EXIF ' + str(f35) if f35 else 'estimated'}; "
+    mm_px = cam.mm_per_px_at([*_sheet_point(cam, part), 0])
+    obs = Observation(photo.image, mask, cam, solid_mask=part.mask if holes.holes else None,
+                      hole_areas_mm2=[a * mm_px**2 for a in holes.areas_px])
+    focal_src = "given" if req.focal35 else "EXIF" if photo.focal35 else "estimated"
+    log(f"{which}: {photo.width}×{photo.height}, focal {focal_src}{f' {f35:g} mm-equiv' if f35 else ''}; "
         f"corner fit {cam.reproj_px:.2f} px, camera {cam.center[2]:.0f} mm up, tilt {obs.tilt_deg():.0f}°; "
         f"part {part.area:.0f} px, SAM downsample {part.downsample:.2f}×; "
         f"{holes.holes} through-hole(s) carved{' (' + holes.skipped + ')' if holes.skipped else ''}")
     info = {"height_mm": float(cam.center[2]), "tilt_deg": obs.tilt_deg(), "focal_px": cam.focal,
-            "focal_source": "exif" if focal_px else "estimated", "corner_reproj_px": cam.reproj_px,
+            "focal_source": focal_src, "corner_reproj_px": cam.reproj_px,
             "sam_part_downsample": part.downsample, "sam_part_confidence": part.confidence,
             "sam_part_masks": len(parts), "holes_carved": holes.holes}
     return obs, info
@@ -147,7 +157,7 @@ def make_part(req: PartRequest, log=print, on_view=None, on_round=None) -> dict:
     (out / "part.scad").write_text(code)
     mesh, _ = scad_to_mesh(code)
     mesh.export(out / "part.stl")
-    for j, (obs, rend) in enumerate(zip(views, best.hybrid.rendered)):
+    for j, (obs, rend) in enumerate(zip(best.views or views, best.hybrid.rendered)):
         cv2.imwrite(str(out / f"view{j + 1}" / "fit_overlay.jpg"), residual_overlay(obs.image_crop, rend, obs.mask_crop))
 
     report = {
@@ -161,6 +171,7 @@ def make_part(req: PartRequest, log=print, on_view=None, on_round=None) -> dict:
         "key_params": _provenance(final_params, best.draft),
         "tunable": best.draft["tunable"],
         "questions": best.draft["questions"],
+        "through_holes": best.draft.get("through_holes", True),
         "rounds": [{"round": r.index, "done": r.draft["done"], "compile_error": r.compile_error,
                     "spark_iou": r.spark_only.iou if r.spark_only else None,
                     "hybrid_iou": r.hybrid.iou if r.hybrid else None,

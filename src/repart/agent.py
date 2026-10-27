@@ -46,8 +46,10 @@ SCHEMA = {
                 "questions": {"type": "array", "items": {"type": "string"},
                               "description": "hidden dimensions only the user can measure"},
                 "done": {"type": "boolean", "description": "true when remaining residuals are alignment noise"},
+                "through_holes": {"type": "boolean",
+                                  "description": "true if the reported through-hole candidates are real holes; false if they are printing, labels or glare"},
             },
-            "required": ["reasoning", "params", "tunable", "measured", "scad", "questions", "done"],
+            "required": ["reasoning", "params", "tunable", "measured", "scad", "questions", "done", "through_holes"],
             "additionalProperties": False,
         },
     },
@@ -113,6 +115,7 @@ class Round:
     lint: list[str] = field(default_factory=list)
     spark_seconds: float = 0.0
     model: str = SPARK_MODEL
+    views: list = field(default_factory=list)  # the observations this round was fitted against
     cost_usd: float = 0.0
 
 
@@ -161,6 +164,12 @@ def run(
         mm_px = obs.cam.mm_per_px_at([*obs.initial_xy(0), 0])
         cams.append(f"Photo {j + 1}: camera {obs.cam.center[2]:.0f} mm above the sheet, tilted "
                     f"{obs.tilt_deg():.0f}° from vertical, ~{mm_px * 1000:.0f} µm/px; crop {x1 - x0}×{y1 - y0} px.")
+    for j, obs in enumerate(views):
+        if obs.hole_areas_mm2:
+            sizes = ", ".join(f"~{np.sqrt(4 * a / np.pi):.1f} mm" for a in sorted(obs.hole_areas_mm2, reverse=True)[:6])
+            cams.append(f"Photo {j + 1}: {len(obs.hole_areas_mm2)} enclosed region(s) inside the part look like the "
+                        f"sheet showing through (equivalent diameters {sizes}). They may be real through-holes, or "
+                        "white printing, labels or glare; say which with `through_holes`.")
     intro = (
         f"{description}\n" + "\n".join(cams) + "\n"
         + (("User answers:\n" + "\n".join(f"- {a}" for a in answers) + "\n") if answers else "")
@@ -198,10 +207,13 @@ def run(
         if "fit_gap" in declared(draft["scad"]):
             params["fit_gap"] = 0.0  # match true geometry; clearance is added on export
         tunable = [k for k in draft["tunable"] if k not in set(draft["measured"]) and k != "fit_gap"]
+        fit_views = views if draft.get("through_holes", True) else [v.without_holes() for v in views]
+        if fit_views is not views:
+            log("   Spark says the hole candidates aren't real holes; fitting the uncarved masks")
         try:
             scad_to_mesh(draft["scad"], params)
-            r.spark_only = fit(draft["scad"], params, [], views, placements=placements)
-            r.hybrid = fit(draft["scad"], params, tunable, views, placements=r.spark_only.placements)
+            r.spark_only = fit(draft["scad"], params, [], fit_views, placements=placements)
+            r.hybrid = fit(draft["scad"], params, tunable, fit_views, placements=r.spark_only.placements)
         except ScadError as e:
             r.compile_error = str(e)[-800:]
             log(f"   compile error: {r.compile_error[:160]}")
@@ -211,7 +223,7 @@ def run(
             for note in r.lint:
                 log(f"   geometry check: {note[:120]}")
             r.residuals = [sector_residuals(rend, obs.mask_crop, obs.cam.mm_per_px_at([*pl[:2], 0]))
-                           for rend, obs, pl in zip(r.hybrid.rendered, views, placements)]
+                           for rend, obs, pl in zip(r.hybrid.rendered, fit_views, placements)]
             per_view = " / ".join(f"{v:.4f}" for v in r.hybrid.ious)
             log(f"   Spark's numbers IoU {r.spark_only.iou:.4f} → hybrid IoU {r.hybrid.iou:.4f} [{per_view}]  "
                 f"edge {r.hybrid.chamfer_mm * 1000:.0f} µm  ({r.hybrid.evals} evals, {r.hybrid.seconds:.0f}s)")
@@ -219,12 +231,13 @@ def run(
             if out_dir:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 (out_dir / f"round{i}.scad").write_text(bake_params(draft["scad"], r.hybrid.params))
-                for j, (obs, rend) in enumerate(zip(views, r.hybrid.rendered)):
+                for j, (obs, rend) in enumerate(zip(fit_views, r.hybrid.rendered)):
                     cv2.imwrite(str(out_dir / f"round{i}_view{j + 1}_overlay.jpg"),
                                 residual_overlay(obs.image_crop, rend, obs.mask_crop))
         if on_round:
             on_round(r)
-        messages += [{"role": "assistant", "content": raw}, {"role": "user", "content": _feedback(r, views)}]
+        r.views = fit_views
+        messages += [{"role": "assistant", "content": raw}, {"role": "user", "content": _feedback(r, fit_views)}]
     return rounds
 
 

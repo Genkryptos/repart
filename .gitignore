@@ -5,3 +5,5 @@ __pycache__/
 runs/
 data/synthetic/
 .DS_Store
+# Third-party photos for private testing only; never commit or ship
+data/external/
