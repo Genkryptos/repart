@@ -26,6 +26,10 @@ brew install --cask openscad@snapshot
 
 Every API call goes through `repart.ledger`, a hard spend cap (`REPART_SPEND_CAP_USD`, default $100), because billing alerts don't stop charges.
 
+## License
+
+MIT, see [LICENSE](LICENSE).
+
 ## Credits
 
 The SAM streaming client is adapted from [meta-models/meta-model-cookbook](https://github.com/meta-models/meta-model-cookbook) (MIT).

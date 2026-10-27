@@ -3,6 +3,8 @@ name = "repart"
 version = "0.1.0"
 description = "Photo-to-CAD replacement parts with a closed-loop Muse Spark agent"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Genkryptos", email = "entrepreneur.mayank.sahu@gmail.com" }
 ]
