@@ -61,7 +61,7 @@ def place(mesh, xy, yaw):
     return m
 
 
-def synth_photo(cam: Camera, rng) -> tuple[np.ndarray, np.ndarray]:
+def synth_photo(cam: Camera, rng, xy=PART_XY, yaw=PART_YAW) -> tuple[np.ndarray, np.ndarray]:
     """BGR photo + true part coverage mask."""
     yy, xx = np.mgrid[0:H_IMG, 0:W_IMG]
     table = 85 + 15 * np.sin(xx / 210.0 + yy / 530.0) + rng.normal(0, 3, (H_IMG, W_IMG))
@@ -73,7 +73,7 @@ def synth_photo(cam: Camera, rng) -> tuple[np.ndarray, np.ndarray]:
     shade = 238 - 10 * (xx / W_IMG)  # mild lighting gradient
     img = img * (1 - sm[..., None]) + (shade * sm)[..., None]
     mesh, _ = scad_to_mesh(KNOB, TRUE)
-    soft, box = silhouette(place(mesh, PART_XY, PART_YAW), cam, supersample=6)
+    soft, box = silhouette(place(mesh, xy, yaw), cam, supersample=6)
     part = full_frame(soft, box, W_IMG, H_IMG)
     img = img * (1 - part[..., None]) + np.array([45, 48, 52]) * part[..., None]
     img = cv2.GaussianBlur(img, (0, 0), 1.0) + rng.normal(0, 3, img.shape)

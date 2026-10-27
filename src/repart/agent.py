@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 
 from . import ledger
+from . import lint
 from .compare import residual_overlay
 from .config import SPARK_MODEL, client
 from .fit import FitResult, Observation, fit, sector_residuals
@@ -59,8 +60,10 @@ Division of labour:
 - YOU decide structure: which primitives, holes, ridges, tapers, chamfers exist.
 - The OPTIMISER decides numbers: it tunes the params you list in `tunable` plus the part's
   position, to maximise silhouette overlap with the photo through the calibrated camera.
-- List as tunable only params that change the outline seen from this camera. Hidden features
+- List as tunable only params that change the outline seen from these cameras. Hidden features
   (bores, underside details) are not tunable; ask the user about them.
+- There may be several photos of the same part, possibly moved between shots. A steep photo
+  shows the side wall and pins down heights; a near-vertical one pins down widths.
 - A dimension the user measured with calipers or a ruler is ground truth: put it in `measured`,
   never in `tunable`. A single tilted view trades height against width, so a locked measurement
   makes every other fitted number more accurate.
@@ -78,7 +81,10 @@ Reading feedback (all residuals are measured AFTER the optimiser's best fit):
 - "missing" = in the photo but not in your model; "extra" = in your model but not the photo.
 - Thin (< 0.15 mm), scattered residuals are edge noise: set done=true.
 - A thick residual concentrated at one clock position means a missing or wrong feature there.
-- If the optimiser had to change a param a lot, your structure is probably wrong."""
+- If the optimiser had to change a param a lot, your structure is probably wrong.
+- Geometry-check notes describe the mesh itself, independent of the photos. Photos can hide a
+  mistake (e.g. the optimiser rotated the part so an error sits inside the outline), so act on
+  them before setting done=true unless the feature is meant to be that way."""
 
 
 def _img_url(bgr: np.ndarray, max_side: int = 1024) -> str:
@@ -96,57 +102,67 @@ class Round:
     compile_error: str | None = None
     spark_only: FitResult | None = None  # placement fitted, Spark's numbers kept
     hybrid: FitResult | None = None  # placement + tunable params fitted
-    residuals: list[dict] = field(default_factory=list)
+    residuals: list[list[dict]] = field(default_factory=list)  # per view
+    lint: list[str] = field(default_factory=list)
     spark_seconds: float = 0.0
     cost_usd: float = 0.0
 
 
-def _feedback(r: Round, obs: Observation) -> list[dict]:
+def _feedback(r: Round, views: list[Observation]) -> list[dict]:
     if r.compile_error:
         return [{"type": "text", "text": f"OpenSCAD error, fix the code:\n{r.compile_error}"}]
     h, s = r.hybrid, r.spark_only
     changes = "\n".join(f"  {k}: {a:g} → {b:g} ({b - a:+.2f})" for k, (a, b) in h.changes.items()) or "  (none)"
-    res = "\n".join(f"  {d['clock']} o'clock: {d['kind']} {d['thickness_mm']} mm" for d in r.residuals[:8]) or "  none ≥ 0.05 mm"
-    text = (
-        f"Your numbers as drafted (placement fitted): IoU {s.iou:.4f}.\n"
-        f"After optimising your tunable params: IoU {h.iou:.4f}, mean edge error {h.comparison.chamfer_mm:.3f} mm, "
-        f"95th percentile {h.comparison.hausdorff_mm:.3f} mm.\n"
-        f"Optimiser changes:\n{changes}\n"
-        f"Residuals after the fit, by clock position in the photo:\n{res}\n"
-        "Overlay attached (green match, red missing, blue extra). Return the full draft: keep the "
-        "optimised values as your new params, change structure only if residuals demand it, "
-        "or set done=true."
-    )
-    overlay = residual_overlay(obs.image_crop, h.rendered, obs.mask_crop)
-    return [{"type": "text", "text": text}, {"type": "image_url", "image_url": {"url": _img_url(overlay)}}]
+    lines = [
+        f"Your numbers as drafted (placement fitted): mean IoU {s.iou:.4f}.",
+        f"After optimising your tunable params: mean IoU {h.iou:.4f}, mean edge error {h.chamfer_mm:.3f} mm.",
+        f"Optimiser changes:\n{changes}",
+    ]
+    content: list[dict] = []
+    for j, (obs, res) in enumerate(zip(views, r.residuals)):
+        rs = "\n".join(f"    {d['clock']} o'clock: {d['kind']} {d['thickness_mm']} mm" for d in res[:8]) or "    none ≥ 0.05 mm"
+        lines.append(f"Photo {j + 1} (tilt {obs.tilt_deg():.0f}°): IoU {h.ious[j]:.4f}, "
+                     f"95th pct edge {h.comparisons[j].hausdorff_mm:.3f} mm. Residuals after the fit:\n{rs}")
+    if r.lint:
+        lines.append("Geometry check on your model:\n" + "\n".join(f"  - {n}" for n in r.lint))
+    lines.append("Overlays attached in photo order (green match, red missing, blue extra). Return the full "
+                 "draft: keep the optimised values as your new params, change structure only if residuals "
+                 "demand it, or set done=true.")
+    content.append({"type": "text", "text": "\n".join(lines)})
+    for obs, rend in zip(views, h.rendered):
+        content.append({"type": "image_url", "image_url": {"url": _img_url(residual_overlay(obs.image_crop, rend, obs.mask_crop))}})
+    return content
 
 
 def run(
-    obs: Observation,
+    views: Observation | list[Observation],
     description: str,
     answers: list[str] | None = None,
     max_rounds: int = 4,
     out_dir: Path | None = None,
     reasoning_effort: str = "high",
     log=print,
+    on_round=None,
 ) -> list[Round]:
+    """on_round(round) is called after each round is fitted (for live progress UIs)."""
+    views = [views] if isinstance(views, Observation) else list(views)
     api = client()
-    x0, y0, x1, y1 = obs.crop
-    mm_px = obs.cam.mm_per_px_at([*obs.initial_xy(0), 0])
+    cams = []
+    for j, obs in enumerate(views):
+        x0, y0, x1, y1 = obs.crop
+        mm_px = obs.cam.mm_per_px_at([*obs.initial_xy(0), 0])
+        cams.append(f"Photo {j + 1}: camera {obs.cam.center[2]:.0f} mm above the sheet, tilted "
+                    f"{obs.tilt_deg():.0f}° from vertical, ~{mm_px * 1000:.0f} µm/px; crop {x1 - x0}×{y1 - y0} px.")
     intro = (
-        f"{description}\n"
-        f"Camera: {obs.cam.center[2]:.0f} mm above the sheet, tilted {obs.tilt_deg():.0f}° from vertical, "
-        f"~{mm_px * 1000:.0f} µm per pixel at the sheet. The crop below is {x1 - x0}×{y1 - y0} px.\n"
+        f"{description}\n" + "\n".join(cams) + "\n"
         + (("User answers:\n" + "\n".join(f"- {a}" for a in answers) + "\n") if answers else "")
         + "Write the first parametric draft."
     )
-    messages = [
-        {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": [{"type": "text", "text": intro},
-                                     {"type": "image_url", "image_url": {"url": _img_url(obs.image_crop)}}]},
-    ]
+    first = [{"type": "text", "text": intro}] + [
+        {"type": "image_url", "image_url": {"url": _img_url(obs.image_crop)}} for obs in views]
+    messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": first}]
     rounds: list[Round] = []
-    placement = None
+    placements = None
     for i in range(max_rounds):
         ledger.ensure(0.05, f"Spark round {i}")
         t0 = time.perf_counter()
@@ -164,6 +180,8 @@ def run(
 
         if i > 0 and draft["done"]:
             log("   Spark declares done.")
+            if on_round:
+                on_round(r)
             break
         params = {k: float(v) for k, v in draft["params"].items() if k in declared(draft["scad"])}
         if "fit_gap" in declared(draft["scad"]):
@@ -171,24 +189,31 @@ def run(
         tunable = [k for k in draft["tunable"] if k not in set(draft["measured"]) and k != "fit_gap"]
         try:
             scad_to_mesh(draft["scad"], params)
-            r.spark_only = fit(draft["scad"], params, [], obs, placement=placement)
-            r.hybrid = fit(draft["scad"], params, tunable, obs, placement=r.spark_only.placement)
+            r.spark_only = fit(draft["scad"], params, [], views, placements=placements)
+            r.hybrid = fit(draft["scad"], params, tunable, views, placements=r.spark_only.placements)
         except ScadError as e:
             r.compile_error = str(e)[-800:]
             log(f"   compile error: {r.compile_error[:160]}")
         else:
-            placement = r.hybrid.placement
-            mm = obs.cam.mm_per_px_at([*placement[:2], 0])
-            r.residuals = sector_residuals(r.hybrid.rendered, obs.mask_crop, mm)
-            log(f"   Spark's numbers IoU {r.spark_only.iou:.4f} → hybrid IoU {r.hybrid.iou:.4f}  "
-                f"edge {r.hybrid.comparison.chamfer_mm * 1000:.0f} µm  ({r.hybrid.evals} evals, {r.hybrid.seconds:.0f}s)")
+            placements = r.hybrid.placements
+            r.lint = lint.notes(scad_to_mesh(draft["scad"], r.hybrid.params)[0])
+            for note in r.lint:
+                log(f"   geometry check: {note[:120]}")
+            r.residuals = [sector_residuals(rend, obs.mask_crop, obs.cam.mm_per_px_at([*pl[:2], 0]))
+                           for rend, obs, pl in zip(r.hybrid.rendered, views, placements)]
+            per_view = " / ".join(f"{v:.4f}" for v in r.hybrid.ious)
+            log(f"   Spark's numbers IoU {r.spark_only.iou:.4f} → hybrid IoU {r.hybrid.iou:.4f} [{per_view}]  "
+                f"edge {r.hybrid.chamfer_mm * 1000:.0f} µm  ({r.hybrid.evals} evals, {r.hybrid.seconds:.0f}s)")
             log("   changes: " + ", ".join(f"{k} {a:g}→{b:g}" for k, (a, b) in r.hybrid.changes.items()))
             if out_dir:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 (out_dir / f"round{i}.scad").write_text(bake_params(draft["scad"], r.hybrid.params))
-                cv2.imwrite(str(out_dir / f"round{i}_overlay.jpg"),
-                            residual_overlay(obs.image_crop, r.hybrid.rendered, obs.mask_crop))
-        messages += [{"role": "assistant", "content": raw}, {"role": "user", "content": _feedback(r, obs)}]
+                for j, (obs, rend) in enumerate(zip(views, r.hybrid.rendered)):
+                    cv2.imwrite(str(out_dir / f"round{i}_view{j + 1}_overlay.jpg"),
+                                residual_overlay(obs.image_crop, rend, obs.mask_crop))
+        if on_round:
+            on_round(r)
+        messages += [{"role": "assistant", "content": raw}, {"role": "user", "content": _feedback(r, views)}]
     return rounds
 
 

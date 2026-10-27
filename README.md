@@ -18,16 +18,25 @@ brew install --cask openscad@snapshot
 
 ## Make a part
 
-Put the part on a white A4 sheet on a darker matte surface. Tilt the phone 15–20°, about 30 cm away, with all four sheet corners in frame.
+Put the part on a white A4 sheet on a darker matte surface. Take two photos with all four sheet corners in frame: one tilted ~20° from about 30 cm, and one steep (~45–50°) from another side. The steep one pins down heights. Moving the part between shots is fine.
 
 ```bash
-uv run repart make photo.jpg --part "black plastic knob" \
+uv run repart make top.jpg steep.jpg --part "black plastic knob" \
   --describe "Fan regulator knob; the D-shaped hole fits the shaft." \
   --answer "Shaft hole 6 mm with a flat 4.5 mm across, 10 mm deep." \
   --material PETG
 ```
 
 This writes `part.stl`, `part.scad` (every dimension named), `fit_overlay.jpg` and `report.json` to `runs/parts/<photo>/`. When the photo can't show something, RePart lists the questions to answer with `--answer`.
+
+## Web app
+
+```bash
+uv run repart serve                 # http://localhost:8000
+uv run repart serve --host 0.0.0.0  # reach it from a phone on the same Wi-Fi
+```
+
+Capture (two photo slots, description, optional measurements, Speak buttons via Muse Voice Transcribe) → live fitting view (overlays per round, overlap and edge error, Spark's reasoning) → result (3D preview, every dimension labelled by where it came from, STL/SCAD download, follow-up questions that re-run the part). "Try a sample part" loads bundled photos, so you can try it without a broken part. The microphone needs https on a phone; localhost is fine.
 
 ## Measure accuracy
 

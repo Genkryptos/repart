@@ -147,26 +147,46 @@ def solve_camera(
     focal_px: float | None = None,
     sheet_mm: tuple[float, float] = A4_MM,
 ) -> Camera:
-    """Pose (and focal, if not given) from 4 ordered sheet corners."""
+    """Pose (and focal, if not given) from 4 ordered sheet corners.
+
+    Which image side is the sheet's long side is ambiguous: in a steep shot the 297 mm
+    side can look shorter than the 210 mm one. Both assignments are solved and the one
+    that reprojects the corners best wins; the wrong aspect leaves hundreds of px of
+    error even when the focal is estimated, since that estimate uses only orthogonality.
+    """
     W, Hh = sheet_mm
     obj = np.array([[0, 0, 0], [W, 0, 0], [W, Hh, 0], [0, Hh, 0]], dtype=np.float64)
-    if focal_px is None:
-        Hm = cv2.getPerspectiveTransform(obj[:, :2].astype(np.float32), corners_px.astype(np.float32))
-        focal_px = focal_from_homography(Hm, width, height)
+    cands = []
+    for shift in (0, 1):
+        img = np.roll(corners_px, -shift, axis=0)
+        f = focal_px
+        if f is None:
+            Hm = cv2.getPerspectiveTransform(obj[:, :2].astype(np.float32), img.astype(np.float32))
+            f = focal_from_homography(Hm, width, height)
+            if f is None:
+                continue
+        cam = _pose(obj, img, intrinsics(width, height, f), width, height)
+        if cam is not None:
+            cands.append(cam)
+    if not cands:
         if focal_px is None:
             raise ValueError("Cannot estimate focal length from a near-frontal view; pass EXIF focal.")
-    K = intrinsics(width, height, focal_px)
+        raise ValueError("Could not recover a camera above the sheet.")
+    return min(cands, key=lambda c: c.reproj_px)
+
+
+def _pose(obj: np.ndarray, corners_px: np.ndarray, K: np.ndarray, width: int, height: int) -> Camera | None:
     # Corner order fixes the world's handedness. If the camera lands below the sheet,
-    # use the reflected order (still long side first) so +z points at the camera.
+    # use the reflected order (still the same side first) so +z points at the camera.
     for order in ([0, 1, 2, 3], [1, 0, 3, 2]):
         img = corners_px[order]
         ok, rvec, tvec = cv2.solvePnP(obj, img, K, None, flags=cv2.SOLVEPNP_IPPE)
-        if ok:
-            # IPPE alone leaves ~10 px residuals on 12 MP photos; LM refinement gets < 1 px.
-            rvec, tvec = cv2.solvePnPRefineLM(obj, img, K, None, rvec, tvec)
+        if not ok:
+            continue
+        # IPPE alone leaves ~10 px residuals on 12 MP photos; LM refinement gets < 1 px.
+        rvec, tvec = cv2.solvePnPRefineLM(obj, img, K, None, rvec, tvec)
         cam = Camera(K, rvec, tvec, width, height)
-        if ok and cam.center[2] > 0:
-            proj = cam.project(obj)
-            cam.reproj_px = float(np.sqrt(np.mean(np.sum((proj - img) ** 2, axis=1))))
+        if cam.center[2] > 0:
+            cam.reproj_px = float(np.sqrt(np.mean(np.sum((cam.project(obj) - img) ** 2, axis=1))))
             return cam
-    raise ValueError("Could not recover a camera above the sheet.")
+    return None

@@ -3,7 +3,7 @@
 Each part lives in data/parts/<id>/ with its photo and a part.json:
 
     {
-      "photo": "top_tilt.jpg",
+      "photos": ["top_tilt.jpg", "steep.jpg"],
       "concept": "black plastic knob",
       "description": "Fan regulator knob; D-shaped hole fits the shaft.",
       "answers": ["Shaft hole is 6 mm with a flat, 10 mm deep."],
@@ -66,7 +66,8 @@ def evaluate(parts_dir: Path, runs_dir: Path, rerun: bool = False, log=print) ->
         if rerun or not (out / "report.json").exists():
             log(f"\n### {pid}")
             report = make_part(PartRequest(
-                photo=spec_path.parent / spec["photo"], concept=spec["concept"], out_dir=out,
+                photos=[spec_path.parent / p for p in spec.get("photos") or [spec["photo"]]],
+                concept=spec["concept"], out_dir=out,
                 description=spec.get("description", ""), answers=spec.get("answers", []),
                 material=spec.get("material", "PETG"), fit_gap=0.0,  # score true geometry
                 focal35=spec.get("focal35"),

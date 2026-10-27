@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RePart</title>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--ink:#1d1d1b;--muted:#6b6a64;--line:#e4e2da;--accent:#185fa5;--accent-bg:#e6f1fb;--ok:#3b6d11;--ok-bg:#eaf3de;--bad:#a32d2d;--bad-bg:#fcebeb;--miss:#e24b4a;--extra:#378add;--match:#639922}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#22221f;--ink:#efede6;--muted:#a3a198;--line:#3a3935;--accent:#85b7eb;--accent-bg:#0c2c4c;--ok:#97c459;--ok-bg:#1c2c0c;--bad:#f09595;--bad-bg:#3a1414}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px 16px 48px}
+header{display:flex;align-items:baseline;gap:10px;margin:8px 0 18px}
+header h1{font-size:22px;font-weight:600;margin:0}
+header span{color:var(--muted);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+h2{font-size:17px;font-weight:600;margin:0 0 4px}
+.hint{color:var(--muted);font-size:14px;margin:0 0 12px}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+input[type=text],textarea,select{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+textarea{min-height:64px;resize:vertical}
+button{font:inherit;font-weight:600;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:11px 14px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;width:100%}
+@media (prefers-color-scheme:dark){button.primary{color:#0b1b2c}}
+button:disabled{opacity:.5;cursor:default}
+.slots{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.slot{border:1.5px dashed var(--line);border-radius:12px;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:13px;color:var(--muted);position:relative;overflow:hidden;cursor:pointer;padding:8px}
+.slot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.slot b{color:var(--ink);font-size:14px}
+.slot input{display:none}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.chip{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--ok-bg);color:var(--ok)}
+.chip.info{background:var(--accent-bg);color:var(--accent)}
+.err{background:var(--bad-bg);color:var(--bad);border-radius:10px;padding:10px 12px;font-size:14px;margin-top:10px}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.metric{background:var(--bg);border-radius:10px;padding:8px 10px}
+.metric small{display:block;color:var(--muted);font-size:12px}
+.metric b{font-size:18px}
+.round{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+.round h3{font-size:14px;margin:0 0 6px;display:flex;justify-content:space-between}
+.overlays{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+.overlays img{width:100%;border-radius:8px;display:block}
+.why{font-size:13px;color:var(--muted);margin:6px 0 0}
+.legend{display:flex;gap:12px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.ask{border:1px solid var(--accent);border-radius:12px;padding:12px;margin-top:12px}
+.ask ul{margin:6px 0 0;padding-left:18px;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td{padding:7px 0;border-bottom:1px solid var(--line)}
+td:last-child{text-align:right;color:var(--muted);font-size:12px}
+td.v{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink);font-size:14px}
+#viewer{width:100%;height:260px;border-radius:12px;background:var(--bg);touch-action:none}
+.row{display:flex;gap:8px;margin-top:12px}
+.row>*{flex:1}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes s{to{transform:rotate(360deg)}}
+.hidden{display:none}
+.lab{display:flex;justify-content:space-between;align-items:end}
+.mic{font-size:13px;font-weight:500;padding:5px 10px;margin:8px 0 4px}
+.mic.on{background:var(--bad-bg);color:var(--bad);border-color:var(--bad)}
+footer{color:var(--muted);font-size:12px;text-align:center;margin-top:20px}
+</style>
+</head>
+<body>
+<main>
+<header><h1>RePart</h1><span>photo of a broken part → printable replacement</span></header>
+
+<section id="capture" class="card">
+  <h2>1. Photograph the part</h2>
+  <p class="hint">Put it on a white A4 sheet on a darker matte surface. Keep all four sheet corners in the photo.</p>
+  <button id="sample" class="hidden" style="width:100%;margin-bottom:12px;font-weight:500">Try a sample part</button>
+  <div class="slots">
+    <label class="slot" id="slot1"><b>Photo 1</b>Tilt the phone ~20°, about 30 cm away<input type="file" accept="image/*" capture="environment"></label>
+    <label class="slot" id="slot2"><b>Photo 2 (recommended)</b>Steeper, ~45°, from another side<input type="file" accept="image/*" capture="environment"></label>
+  </div>
+  <label for="part">What is it? (1-6 words)</label>
+  <input type="text" id="part" placeholder="black plastic knob" maxlength="60">
+  <div class="lab"><label for="describe">What does it do?</label><button class="mic hidden" data-for="describe">Speak</button></div>
+  <textarea id="describe" placeholder="Fan regulator knob. The D-shaped hole fits the shaft." maxlength="600"></textarea>
+  <div class="lab"><label for="answers">Measurements the photo can't show (optional, one per line)</label><button class="mic hidden" data-for="answers">Speak</button></div>
+  <textarea id="answers" placeholder="Shaft hole 6 mm with a flat, 10 mm deep" maxlength="600"></textarea>
+  <label for="material">Print material</label>
+  <select id="material"><option>PETG</option><option>PLA</option><option>ABS</option><option>Nylon</option><option>TPU</option></select>
+  <div id="capture-err" class="err hidden"></div>
+  <div class="row"><button class="primary" id="go">Make my part</button></div>
+</section>
+
+<section id="fitting" class="card hidden">
+  <h2>2. Fitting</h2>
+  <p class="hint" id="status"><span class="spin"></span>Finding the sheet and the part…</p>
+  <div id="views" class="chips"></div>
+  <div class="metrics">
+    <div class="metric"><small>Overlap</small><b id="m-iou">–</b></div>
+    <div class="metric"><small>Edge error</small><b id="m-edge">–</b></div>
+    <div class="metric"><small>Round</small><b id="m-round">–</b></div>
+  </div>
+  <div class="legend"><span><i style="background:var(--match)"></i>match</span><span><i style="background:var(--miss)"></i>missing</span><span><i style="background:var(--extra)"></i>extra</span></div>
+  <div id="rounds"></div>
+  <div id="retake" class="err hidden"></div>
+</section>
+
+<section id="result" class="card hidden">
+  <h2>3. Ready to print</h2>
+  <div id="viewer"></div>
+  <table id="dims"></table>
+  <p class="hint" id="fitnote" style="margin-top:10px"></p>
+  <div class="row"><button id="dl-stl">Download STL</button><button id="dl-scad">Download SCAD</button></div>
+  <div id="ask" class="ask hidden">
+    <b>RePart can't see these from the photos</b>
+    <ul id="questions"></ul>
+    <label for="more">Your answers (one per line)</label>
+    <textarea id="more"></textarea>
+    <div class="row"><button class="primary" id="rerun">Update the part</button></div>
+  </div>
+</section>
+
+<footer id="spend"></footer>
+</main>
+
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from "three";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const $ = (id) => document.getElementById(id);
+const files = [null, null];
+let job = null, poll = null, lastRounds = -1, viewerReady = false;
+
+for (const [i, id] of ["slot1", "slot2"].entries()) {
+  const slot = $(id), input = slot.querySelector("input");
+  input.addEventListener("change", () => {
+    const f = input.files[0];
+    if (!f) return;
+    files[i] = f;
+    slot.querySelector("img")?.remove();
+    if (/^image\/(jpeg|png|webp)$/.test(f.type)) {
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(f);
+      slot.appendChild(img);
+    } else {
+      slot.querySelector("b").textContent = `Photo ${i + 1}: ${f.name}`;
+    }
+  });
+}
+
+function show(id) { for (const s of ["capture", "fitting", "result"]) $(s).classList.toggle("hidden", s !== id && !(id === "result" && s === "fitting")); }
+function fail(el, msg) { el.textContent = msg; el.classList.remove("hidden"); }
+function pct(x) { return x == null ? "–" : (100 * x).toFixed(1) + "%"; }
+function mm(x) { return x == null ? "–" : x.toFixed(2) + " mm"; }
+
+async function start(reuse = null, extraAnswers = "") {
+  const err = $("capture-err");
+  err.classList.add("hidden");
+  const part = $("part").value.trim();
+  if (!reuse && !files[0]) return fail(err, "Add at least photo 1.");
+  if (!part) return fail(err, "Say what the part is, like 'black plastic knob'.");
+  const fd = new FormData();
+  if (!reuse) files.filter(Boolean).forEach((f) => fd.append("photos", f, f.name));
+  fd.append("part", part);
+  fd.append("describe", $("describe").value);
+  fd.append("answers", [$("answers").value, extraAnswers].filter((s) => s.trim()).join("\n"));
+  fd.append("material", $("material").value);
+  if (reuse) fd.append("reuse", reuse);
+  $("go").disabled = true;
+  try {
+    const r = await fetch("/api/jobs", { method: "POST", body: fd });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.detail || "Upload failed.");
+    job = body.id;
+  } catch (e) {
+    $("go").disabled = false;
+    return fail(err, e.message);
+  }
+  if (extraAnswers) $("answers").value = [$("answers").value, extraAnswers].filter((s) => s.trim()).join("\n");
+  lastRounds = -1;
+  $("rounds").innerHTML = ""; $("views").innerHTML = ""; $("retake").classList.add("hidden");
+  $("status").innerHTML = '<span class="spin"></span>Finding the sheet and the part…';
+  ["m-iou", "m-edge", "m-round"].forEach((id) => ($(id).textContent = "–"));
+  show("fitting");
+  clearInterval(poll);
+  poll = setInterval(refresh, 1200);
+}
+
+function renderRound(r) {
+  const div = document.createElement("div");
+  div.className = "round";
+  const h = document.createElement("h3");
+  const left = document.createElement("span");
+  left.textContent = `Round ${r.round + 1}${r.done ? " · done" : ""}`;
+  const right = document.createElement("span");
+  right.textContent = r.iou != null ? `${pct(r.spark_iou)} → ${pct(r.iou)}` : (r.compile_error ? "code error, retrying" : "");
+  h.append(left, right);
+  div.appendChild(h);
+  if (r.overlays) {
+    const grid = document.createElement("div");
+    grid.className = "overlays";
+    for (const o of r.overlays) {
+      const img = document.createElement("img");
+      img.src = `/api/jobs/${job}/files/${o}`;
+      img.alt = "Model outline over the photo";
+      grid.appendChild(img);
+    }
+    div.appendChild(grid);
+  }
+  const why = document.createElement("p");
+  why.className = "why";
+  why.textContent = r.reasoning;
+  div.appendChild(why);
+  return div;
+}
+
+async function refresh() {
+  const r = await fetch(`/api/jobs/${job}`);
+  if (!r.ok) return;
+  const s = await r.json();
+  $("spend").textContent = `Spent $${s.spent_usd.toFixed(2)} of the $${s.cap_usd.toFixed(0)} cap`;
+  if (s.views.length !== $("views").children.length) {
+    $("views").innerHTML = "";
+    for (const [i, v] of s.views.entries()) {
+      const c = document.createElement("span");
+      c.className = "chip";
+      c.textContent = `Photo ${i + 1}: tilt ${v.tilt_deg.toFixed(0)}°, ${v.height_mm.toFixed(0)} mm up`;
+      $("views").appendChild(c);
+    }
+  }
+  if (s.views.length && s.state === "running") $("status").innerHTML = '<span class="spin"></span>RePart is drafting and fitting the model…';
+  if (s.rounds.length !== lastRounds) {
+    $("rounds").innerHTML = "";
+    for (const rd of s.rounds) $("rounds").appendChild(renderRound(rd));
+    lastRounds = s.rounds.length;
+    const fitted = s.rounds.filter((x) => x.iou != null);
+    if (fitted.length) {
+      const last = fitted[fitted.length - 1];
+      $("m-iou").textContent = pct(last.iou);
+      $("m-edge").textContent = mm(last.edge_mm);
+      $("m-round").textContent = String(s.rounds.length);
+    }
+  }
+  if (s.state === "retake" || s.state === "error") {
+    clearInterval(poll);
+    show("capture");
+    fail($("capture-err"), (s.state === "retake" ? "Retake needed: " : "Something went wrong: ") + s.message);
+    $("capture-err").scrollIntoView({ behavior: "smooth", block: "center" });
+    $("go").disabled = false;
+  }
+  if (s.state === "done") {
+    clearInterval(poll);
+    $("status").textContent = `Done in ${s.elapsed_s.toFixed(0)} s for $${s.report.cost_usd.toFixed(3)}.`;
+    $("go").disabled = false;
+    showResult(s.report);
+  }
+}
+
+function showResult(rep) {
+  show("result");
+  const t = $("dims");
+  t.innerHTML = "";
+  for (const p of rep.key_params) {
+    const tr = document.createElement("tr");
+    const a = document.createElement("td"); a.textContent = p.name.replaceAll("_", " ");
+    const b = document.createElement("td"); b.className = "v"; b.textContent = `${p.value.toFixed(2)} mm`;
+    const c = document.createElement("td"); c.textContent = p.source;
+    tr.append(a, b, c);
+    t.appendChild(tr);
+  }
+  $("fitnote").textContent = `Matches your photos at ${pct(rep.iou)} overlap, ${mm(rep.edge_mm)} average edge error.` +
+    (rep.fit_gap_mm != null ? ` Mating holes include a ${rep.fit_gap_mm.toFixed(2)} mm fit gap for ${rep.material}.` : "");
+  $("dl-stl").onclick = () => (location.href = `/api/jobs/${job}/files/part.stl`);
+  $("dl-scad").onclick = () => (location.href = `/api/jobs/${job}/files/part.scad`);
+  const qs = $("questions");
+  qs.innerHTML = "";
+  for (const q of rep.questions) { const li = document.createElement("li"); li.textContent = q; qs.appendChild(li); }
+  $("ask").classList.toggle("hidden", !rep.questions.length);
+  $("more").value = "";
+  loadModel(`/api/jobs/${job}/files/part.stl`);
+}
+
+let scene, camera, renderer, controls, meshObj;
+function initViewer() {
+  const el = $("viewer");
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.setSize(el.clientWidth, el.clientHeight);
+  el.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(35, el.clientWidth / el.clientHeight, 0.1, 2000);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 2.2));
+  const d = new THREE.DirectionalLight(0xffffff, 1.6); d.position.set(60, 80, 120); scene.add(d);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+  viewerReady = true;
+}
+function loadModel(url) {
+  if (!viewerReady) initViewer();
+  new STLLoader().load(url + `?t=${Date.now()}`, (geo) => {
+    geo.computeVertexNormals();
+    geo.center();
+    if (meshObj) scene.remove(meshObj);
+    meshObj = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x5f8fbf, roughness: 0.55, metalness: 0.05 }));
+    meshObj.rotation.x = -Math.PI / 2;
+    scene.add(meshObj);
+    geo.computeBoundingSphere();
+    const r = geo.boundingSphere.radius;
+    camera.position.set(r * 1.6, r * 1.5, r * 2.2);
+    controls.target.set(0, 0, 0);
+  });
+}
+
+function setSlot(i, file) {
+  files[i] = file;
+  const slot = $(["slot1", "slot2"][i]);
+  slot.querySelector("img")?.remove();
+  const img = document.createElement("img");
+  img.src = URL.createObjectURL(file);
+  slot.appendChild(img);
+}
+fetch("/api/samples").then((r) => r.json()).then((list) => {
+  if (!list.length) return;
+  const link = $("sample"), s = list[0];
+  link.textContent = `No broken part to hand? Try ${s.title}`;
+  link.classList.remove("hidden");
+  link.addEventListener("click", async (e) => {
+    e.preventDefault();
+    for (const [i, name] of s.photos.slice(0, 2).entries()) {
+      const blob = await (await fetch(`/api/samples/${s.id}/${name}`)).blob();
+      setSlot(i, new File([blob], name, { type: blob.type || "image/jpeg" }));
+    }
+    $("part").value = s.concept;
+    $("describe").value = s.description;
+    $("answers").value = s.answers.join("\n");
+    $("material").value = s.material;
+  });
+});
+
+// Voice: tap to record, tap again to stop; the transcript is appended to the field.
+let rec = null, chunks = [];
+if (navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
+  for (const btn of document.querySelectorAll(".mic")) {
+    btn.classList.remove("hidden");
+    btn.addEventListener("click", async () => {
+      const field = $(btn.dataset.for), err = $("capture-err");
+      if (rec) { rec.stop(); return; }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        rec = new MediaRecorder(stream);
+        chunks = [];
+        rec.ondataavailable = (e) => chunks.push(e.data);
+        rec.onstop = async () => {
+          stream.getTracks().forEach((t) => t.stop());
+          btn.classList.remove("on"); btn.textContent = "Transcribing…"; rec = null;
+          const type = chunks[0]?.type || "audio/webm";
+          const fd = new FormData();
+          fd.append("audio", new Blob(chunks, { type }), type.includes("mp4") ? "speech.mp4" : "speech.webm");
+          try {
+            const r = await fetch("/api/transcribe", { method: "POST", body: fd });
+            const body = await r.json();
+            if (!r.ok) throw new Error(body.detail || "Transcription failed.");
+            field.value = [field.value.trim(), body.text].filter(Boolean).join(btn.dataset.for === "answers" ? "\n" : " ");
+          } catch (e) { fail(err, e.message); }
+          btn.textContent = "Speak";
+        };
+        rec.start();
+        btn.classList.add("on"); btn.textContent = "Stop";
+      } catch (e) { fail(err, "Microphone unavailable. On a phone this needs the https address."); }
+    });
+  }
+}
+
+$("go").addEventListener("click", () => start());
+$("rerun").addEventListener("click", () => {
+  const more = $("more").value.trim();
+  if (!more) { $("more").focus(); return; }
+  start(job, more);
+});
+</script>
+</body>
+</html>

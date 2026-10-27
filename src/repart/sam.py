@@ -172,7 +172,7 @@ class ImageMask:
 
     @property
     def area(self) -> float:
-        return float(self.mask.sum())
+        return float(self.mask.sum(dtype=np.float64))  # float16 cached masks overflow otherwise
 
     def centroid(self) -> tuple[float, float]:
         ys, xs = np.nonzero(self.mask > 0.5)
@@ -206,7 +206,8 @@ async def segment_photo(path: Path, concept: str, width: int, height: int) -> li
     cache = CACHE_DIR / "sam_image" / f"{_sha(path)}-{concept.replace(' ', '_')}.npz"
     if cache.exists():
         z = np.load(cache, allow_pickle=True)
-        return [ImageMask(str(i), m, c, d) for i, m, c, d in zip(z["ids"], z["masks"], z["conf"], z["down"])]
+        return [ImageMask(str(i), m.astype(np.float32), c, d)
+                for i, m, c, d in zip(z["ids"], z["masks"], z["conf"], z["down"])]
     price = ledger.PRICES["sam-3.1:image"]
     ledger.ensure(price, f"SAM {concept!r}")
     masks = image_masks(await segment_image(path, concept), width, height)

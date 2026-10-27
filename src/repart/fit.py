@@ -80,89 +80,120 @@ def render_crop(mesh: trimesh.Trimesh, obs: Observation, supersample: int = 4) -
     return out
 
 
+Placement = tuple[float, float, float]  # x mm, y mm, yaw rad on the sheet
+
+
 @dataclass
 class FitResult:
     params: dict[str, float]  # all params, tuned values substituted
-    placement: tuple[float, float, float]  # x mm, y mm, yaw rad
-    iou: float
-    comparison: Comparison
-    rendered: np.ndarray  # crop
+    placements: list[Placement]  # one per view
+    ious: list[float]
+    comparisons: list[Comparison]
+    rendered: list[np.ndarray]  # crops, one per view
     evals: int
     seconds: float
     changes: dict[str, tuple[float, float]] = field(default_factory=dict)  # name -> (before, after)
+
+    @property
+    def iou(self) -> float:
+        return float(np.mean(self.ious))
+
+    @property
+    def chamfer_mm(self) -> float:
+        return float(np.mean([c.chamfer_mm for c in self.comparisons]))
 
 
 def fit(
     code: str,
     params: dict[str, float],
     tunable: list[str],
-    obs: Observation,
-    placement: tuple[float, float, float] | None = None,
-    max_evals: int = 500,
+    views: Observation | list[Observation],
+    placements: list[Placement] | None = None,
+    max_evals: int | None = None,
     prior_weight: float = 1e-4,
 ) -> FitResult:
-    """Nelder-Mead on (tunable params, x, y, yaw) maximising silhouette IoU.
+    """Nelder-Mead on (tunable params, then x, y, yaw per view) maximising mean IoU.
 
-    A tiny quadratic pull toward the drafted values breaks ties along directions a
-    single view can't see (e.g. taper vs. height), so unobservable params stay put.
+    Shape params are shared; each photo gets its own placement, so the part may be
+    moved between shots. A tiny quadratic pull toward the drafted values breaks ties
+    along directions no view can see, so unobservable params stay put.
     """
     t0 = time.perf_counter()
+    views = [views] if isinstance(views, Observation) else list(views)
     tunable = [k for k in tunable if k in params]
-    p0 = np.array([params[k] for k in tunable], dtype=float)
+    k = len(tunable)
+    p0 = np.array([params[t] for t in tunable], dtype=float)
     scale = np.maximum(0.1 * np.abs(p0), 0.5)
-    target = obs.mask_crop
     meshes: dict[tuple, trimesh.Trimesh | None] = {}
     n = {"evals": 0}
 
     def mesh_for(vals: np.ndarray) -> trimesh.Trimesh | None:
         key = tuple(np.round(vals, 3))
         if key not in meshes:
-            p = dict(params) | {k: float(v) for k, v in zip(tunable, key)}
+            p = dict(params) | {t: float(v) for t, v in zip(tunable, key)}
             try:
                 meshes[key] = centre_mesh(scad_to_mesh(code, p)[0])
             except ScadError:
                 meshes[key] = None
         return meshes[key]
 
+    def view_loss(m: trimesh.Trimesh, pl, obs: Observation) -> float:
+        return 1.0 - soft_iou(render_crop(place(m, *pl), obs, supersample=3), obs.mask_crop)
+
     def loss(z: np.ndarray) -> float:
         n["evals"] += 1
-        vals, (x, y, yaw) = z[: len(tunable)], z[len(tunable):]
+        vals = z[:k]
         if np.any(vals <= 0):
             return 2.0
         m = mesh_for(vals)
         if m is None:
             return 2.0
-        iou = soft_iou(render_crop(place(m, x, y, yaw), obs, supersample=3), target)
-        return 1.0 - iou + prior_weight * float(np.sum(((vals - p0) / scale) ** 2))
+        pls = z[k:].reshape(-1, 3)
+        err = np.mean([view_loss(m, pl, obs) for pl, obs in zip(pls, views)])
+        return float(err) + prior_weight * float(np.sum(((vals - p0) / scale) ** 2))
 
-    if placement is None:
+    if placements is None:
         m0 = mesh_for(p0)
         if m0 is None:
             raise ScadError("Draft does not compile with its own parameters.")
-        xy = obs.initial_xy(m0.bounds[1][2] / 2)
-        yaws = np.radians(np.arange(0, 360, 15))
-        yaw = min(yaws, key=lambda a: loss(np.r_[p0, xy, a]))
-        placement = (float(xy[0]), float(xy[1]), float(yaw))
+        placements = []
+        for obs in views:
+            # Per-view start: centroid back-projection, yaw grid, then a short 3-D polish.
+            xy = obs.initial_xy(m0.bounds[1][2] / 2)
+            yaw = min(np.radians(np.arange(0, 360, 15)), key=lambda a: view_loss(m0, (*xy, a), obs))
+            z = np.r_[xy, yaw]
+            res = minimize(lambda q: view_loss(m0, q, obs), z, method="Nelder-Mead",
+                           options={"initial_simplex": np.vstack([z, z + np.diag([0.75, 0.75, np.radians(4)])]),
+                                    "xatol": 1e-2, "fatol": 1e-5, "maxfev": 80})
+            n["evals"] += res.nfev
+            placements.append(tuple(float(v) for v in res.x))
 
-    z0 = np.r_[p0, placement]
-    steps = np.r_[scale * 0.5, 0.75, 0.75, np.radians(4)]
+    z0 = np.r_[p0, np.ravel(placements)]
+    steps = np.r_[scale * 0.5, np.tile([0.75, 0.75, np.radians(4)], len(views))]
     res = minimize(loss, z0, method="Nelder-Mead",
                    options={"initial_simplex": np.vstack([z0, z0 + np.diag(steps)]),
-                            "xatol": 2e-3, "fatol": 1e-6, "maxfev": max_evals, "adaptive": len(z0) > 4})
-    vals, (x, y, yaw) = res.x[: len(tunable)], res.x[len(tunable):]
-    final = dict(params) | {k: round(float(v), 3) for k, v in zip(tunable, vals)}
+                            "xatol": 2e-3, "fatol": 1e-6, "maxfev": max_evals or 350 + 150 * len(z0),
+                            "adaptive": len(z0) > 4})
+    vals = res.x[:k]
+    pls = [tuple(float(v) for v in pl) for pl in res.x[k:].reshape(-1, 3)]
+    final = dict(params) | {t: round(float(v), 3) for t, v in zip(tunable, vals)}
     m = mesh_for(np.round(vals, 3))
-    rendered = render_crop(place(m, x, y, yaw), obs)
-    mm_px = obs.cam.mm_per_px_at([x, y, m.bounds[1][2] / 2])
+    rendered, ious, comps = [], [], []
+    for pl, obs in zip(pls, views):
+        r = render_crop(place(m, *pl), obs)
+        mm_px = obs.cam.mm_per_px_at([pl[0], pl[1], m.bounds[1][2] / 2])
+        rendered.append(r)
+        ious.append(soft_iou(r, obs.mask_crop))
+        comps.append(compare(r, obs.mask_crop, mm_px))
     return FitResult(
         params=final,
-        placement=(float(x), float(y), float(yaw)),
-        iou=soft_iou(rendered, target),
-        comparison=compare(rendered, target, mm_px),
+        placements=pls,
+        ious=ious,
+        comparisons=comps,
         rendered=rendered,
         evals=n["evals"],
         seconds=time.perf_counter() - t0,
-        changes={k: (params[k], final[k]) for k in tunable if abs(final[k] - params[k]) >= 0.005},
+        changes={t: (params[t], final[t]) for t in tunable if abs(final[t] - params[t]) >= 0.005},
     )
 
 

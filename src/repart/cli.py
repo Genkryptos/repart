@@ -17,10 +17,10 @@ from .pipeline import FIT_GAPS, PartRequest, make_part
 
 
 def _make(args) -> int:
-    out = args.out or RUNS_DIR / "parts" / args.photo.stem
+    out = args.out or RUNS_DIR / "parts" / args.photos[0].stem
     try:
         report = make_part(PartRequest(
-            photo=args.photo, concept=args.part, out_dir=out, description=args.describe or "",
+            photos=args.photos, concept=args.part, out_dir=out, description=args.describe or "",
             answers=args.answer or [], material=args.material, fit_gap=args.fit_gap,
             max_rounds=args.rounds, focal35=args.focal35, sheet_concept=args.sheet,
         ))
@@ -37,7 +37,9 @@ def _make(args) -> int:
           f"(round {report['best_round']} of {len(report['rounds'])}), cost ${report['cost_usd']:.3f}")
     if report["fit_gap_mm"] is not None:
         print(f"Mating holes include a {report['fit_gap_mm']:.2f} mm fit gap for {report['material']}.")
-    print(f"Files: {out / 'part.stl'}, {out / 'part.scad'}, {out / 'fit_overlay.jpg'}")
+    for j, v in enumerate(report["views"]):
+        print(f"  photo {j + 1}: tilt {v['tilt_deg']:.0f}°, IoU {v['iou']:.4f}, edge {v['edge_mm']:.3f} mm")
+    print(f"Files: {out / 'part.stl'}, {out / 'part.scad'}, overlays in {out}/view*/")
     if report["questions"]:
         print("\nRePart can't see these from the photo. Measure and re-run with --answer:")
         for q in report["questions"]:
@@ -55,12 +57,20 @@ def _eval(args) -> int:
     return 0
 
 
+def _serve(args) -> int:
+    from .web import serve
+
+    print(f"RePart on http://{args.host}:{args.port}")
+    serve(args.host, args.port)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="repart", description="Photo of a broken part → printable replacement.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    mk = sub.add_parser("make", help="photo → STL")
-    mk.add_argument("photo", type=Path)
+    mk = sub.add_parser("make", help="photos → STL")
+    mk.add_argument("photos", type=Path, nargs="+", help="one or more photos; add a steep (~50°) one for heights")
     mk.add_argument("--part", required=True, help='short noun phrase SAM can find, e.g. "black plastic knob"')
     mk.add_argument("--describe", help="what the part does and anything notable")
     mk.add_argument("--answer", action="append", help="a measurement the photo can't show (repeatable)")
@@ -76,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("parts", type=Path, nargs="?", default=Path("data/parts"))
     ev.add_argument("--rerun", action="store_true")
     ev.set_defaults(func=_eval)
+
+    sv = sub.add_parser("serve", help="run the web app")
+    sv.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to reach it from a phone on the same Wi-Fi")
+    sv.add_argument("--port", type=int, default=8000)
+    sv.set_defaults(func=_serve)
 
     args = ap.parse_args(argv)
     return args.func(args)

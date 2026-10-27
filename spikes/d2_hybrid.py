@@ -64,7 +64,7 @@ def main() -> None:
         dims = mesh_dims((out / f"round{r.index}.scad").read_text())
         err = {k: dims[k] - v for k, v in TRUTH.items()}
         table.append({"round": r.index, "spark_iou": r.spark_only.iou, "hybrid_iou": r.hybrid.iou,
-                      "edge_um": r.hybrid.comparison.chamfer_mm * 1000, "dims": dims, "err": err,
+                      "edge_um": r.hybrid.chamfer_mm * 1000, "dims": dims, "err": err,
                       "tunable": r.draft["tunable"], "questions": r.draft["questions"]})
         print(f"  {r.index}   |     {r.spark_only.iou:.4f}     |   {r.hybrid.iou:.4f}   | {table[-1]['edge_um']:6.0f}  | "
               + " | ".join(f"{dims[k]:.2f} ({err[k]:+.2f})" for k in TRUTH))
