@@ -1,0 +1,28 @@
+{
+  "photo": "top_tilt.jpg",
+  "concept": "black round knob",
+  "description": "Synthetic render of a fan-regulator knob on an A4 sheet (flat shading, no texture).",
+  "answers": [
+    "There is a raised pointer ridge on top of the knob: 2 mm tall, 3 mm wide, running from near the centre to about 3 mm from the edge."
+  ],
+  "material": "PETG",
+  "calipers": [
+    {
+      "name": "diameter (mid-height)",
+      "kind": "diameter_at",
+      "z": 9,
+      "mm": 32.0
+    },
+    {
+      "name": "diameter (near base)",
+      "kind": "diameter_at",
+      "z": 3,
+      "mm": 32.0
+    },
+    {
+      "name": "total height",
+      "kind": "height",
+      "mm": 20.0
+    }
+  ]
+}

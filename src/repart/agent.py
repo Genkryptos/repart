@@ -68,6 +68,9 @@ Division of labour:
 Code rules:
 - Declare every dimension as a top-level `name = value;` (mm), keep names stable across rounds.
 - Part rests on z=0, centred on the origin in x/y. $fn >= 96 for round features.
+- Declare `fit_gap = 0.2;` and add it to every hole, socket or slot that mates with another
+  part (e.g. `d = shaft_d + 2 * fit_gap`). The loop sets it to 0 while matching the photo and
+  to the material's clearance on export. Never list fit_gap as tunable or measured.
 - Prefer the simplest structure that explains the outline. Don't add a taper, chamfer or skirt
   unless the residuals demand it: extra freedom the camera can't see makes the fit ambiguous.
 
@@ -163,7 +166,9 @@ def run(
             log("   Spark declares done.")
             break
         params = {k: float(v) for k, v in draft["params"].items() if k in declared(draft["scad"])}
-        tunable = [k for k in draft["tunable"] if k not in set(draft["measured"])]
+        if "fit_gap" in declared(draft["scad"]):
+            params["fit_gap"] = 0.0  # match true geometry; clearance is added on export
+        tunable = [k for k in draft["tunable"] if k not in set(draft["measured"]) and k != "fit_gap"]
         try:
             scad_to_mesh(draft["scad"], params)
             r.spark_only = fit(draft["scad"], params, [], obs, placement=placement)

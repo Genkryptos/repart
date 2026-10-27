@@ -12,9 +12,11 @@ import mimetypes
 from collections import defaultdict
 from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import aclosing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 from meta_sam_parser import (
     ResponsesEventLike,
@@ -159,6 +161,65 @@ def tracks_from_result(result: SegmentationResult, concept: str) -> list[Track]:
             Track(oid, concept, np.array(frames), a[:, 0], a[:, 1], a[:, 2], a[:, 3:7])
         )
     return tracks
+
+
+@dataclass
+class ImageMask:
+    object_id: str
+    mask: np.ndarray  # full-frame float 0..1
+    confidence: float | None
+    downsample: float  # box px per mask px; > 1 means SAM returned a coarser mask
+
+    @property
+    def area(self) -> float:
+        return float(self.mask.sum())
+
+    def centroid(self) -> tuple[float, float]:
+        ys, xs = np.nonzero(self.mask > 0.5)
+        return float(xs.mean()), float(ys.mean())
+
+
+def image_masks(result: SegmentationResult, width: int, height: int) -> list[ImageMask]:
+    """Each returned object as a full-frame soft mask (box-local raster scaled to its bounds)."""
+    out = []
+    for rec in result.records:
+        if rec.kind != "mask":
+            continue
+        b = rec.bounds
+        raster = np.frombuffer(decode_mask_to_raster(rec.mask), np.uint8).reshape(rec.mask.height, rec.mask.width)
+        x0, y0 = int(np.floor(b.left)), int(np.floor(b.top))
+        x1, y1 = min(int(np.ceil(b.right)), width), min(int(np.ceil(b.bottom)), height)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        # Resample in float so a coarse mask gets soft (sub-pixel) edges, not blocky ones.
+        patch = cv2.resize((raster > 0).astype(np.float32), (x1 - x0, y1 - y0), interpolation=cv2.INTER_LINEAR)
+        full = np.zeros((height, width), np.float32)
+        full[y0:y1, x0:x1] = patch
+        out.append(ImageMask(rec.object_id, full, rec.confidence, (b.right - b.left) / rec.mask.width))
+    return out
+
+
+async def segment_photo(path: Path, concept: str, width: int, height: int) -> list[ImageMask]:
+    """SAM on a still, cached on disk by (image hash, concept), behind the spend cap."""
+    from . import ledger
+
+    cache = CACHE_DIR / "sam_image" / f"{_sha(path)}-{concept.replace(' ', '_')}.npz"
+    if cache.exists():
+        z = np.load(cache, allow_pickle=True)
+        return [ImageMask(str(i), m, c, d) for i, m, c, d in zip(z["ids"], z["masks"], z["conf"], z["down"])]
+    price = ledger.PRICES["sam-3.1:image"]
+    ledger.ensure(price, f"SAM {concept!r}")
+    masks = image_masks(await segment_image(path, concept), width, height)
+    ledger.record("sam-3.1:image", price, concept=concept)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        cache,
+        ids=np.array([m.object_id for m in masks]),
+        masks=np.array([m.mask.astype(np.float16) for m in masks]).reshape(len(masks), height, width),
+        conf=np.array([m.confidence if m.confidence is not None else np.nan for m in masks]),
+        down=np.array([m.downsample for m in masks]),
+    )
+    return masks
 
 
 def _sha(path: Path) -> str:

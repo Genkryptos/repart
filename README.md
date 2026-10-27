@@ -16,6 +16,27 @@ cp .env.example .env    # add MODEL_API_KEY
 brew install --cask openscad@snapshot
 ```
 
+## Make a part
+
+Put the part on a white A4 sheet on a darker matte surface. Tilt the phone 15–20°, about 30 cm away, with all four sheet corners in frame.
+
+```bash
+uv run repart make photo.jpg --part "black plastic knob" \
+  --describe "Fan regulator knob; the D-shaped hole fits the shaft." \
+  --answer "Shaft hole 6 mm with a flat 4.5 mm across, 10 mm deep." \
+  --material PETG
+```
+
+This writes `part.stl`, `part.scad` (every dimension named), `fit_overlay.jpg` and `report.json` to `runs/parts/<photo>/`. When the photo can't show something, RePart lists the questions to answer with `--answer`.
+
+## Measure accuracy
+
+Each eval part is a folder in `data/parts/<id>/` with the photo and a `part.json` holding caliper readings (format in `src/repart/evaluate.py`).
+
+```bash
+uv run repart eval          # → runs/eval/summary.md
+```
+
 ## Spikes
 
 | Script | Needs | What it checks |
