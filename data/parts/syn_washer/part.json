@@ -1,0 +1,30 @@
+{
+  "photos": [
+    "photo1.jpg",
+    "photo2.jpg"
+  ],
+  "concept": "black plastic washer",
+  "description": "Plastic spacer washer from a ceiling fan mount.",
+  "answers": [],
+  "material": "PETG",
+  "calipers": [
+    {
+      "name": "outer diameter",
+      "kind": "diameter_at",
+      "z": 3,
+      "mm": 24.0
+    },
+    {
+      "name": "hole diameter",
+      "kind": "hole_diameter_at",
+      "z": 3,
+      "mm": 8.0
+    },
+    {
+      "name": "thickness",
+      "kind": "height",
+      "mm": 6.0
+    }
+  ],
+  "truth_scad": "$fn=128; difference(){ cylinder(d=24, h=6); translate([0,0,-1]) cylinder(d=8, h=8); }"
+}

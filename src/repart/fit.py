@@ -6,7 +6,10 @@ costs a cached OpenSCAD compile plus one small raster: ~0.05-0.1 s on 12 MP phot
 
 from __future__ import annotations
 
+import os
+import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import cv2
@@ -82,6 +85,13 @@ def render_crop(mesh: trimesh.Trimesh, obs: Observation, supersample: int = 4) -
 
 Placement = tuple[float, float, float]  # x mm, y mm, yaw rad on the sheet
 
+_POSITION = re.compile(r"(offset|shift|pos|centre|center|^c[xyz]|_c[xyz]$|^[xyz]\d*$|^[xyz]_|_[xyz]$|_[xyz]\d$)", re.I)
+
+
+def is_position(name: str) -> bool:
+    """Heuristic: does this parameter place something (may be negative) rather than size it?"""
+    return bool(_POSITION.search(name))
+
 
 @dataclass
 class FitResult:
@@ -111,6 +121,8 @@ def fit(
     placements: list[Placement] | None = None,
     max_evals: int | None = None,
     prior_weight: float = 1e-4,
+    method: str = "nelder-mead",  # "cma" is ~4x faster but collapsed the bracket wall in testing
+    _retry: bool = True,
 ) -> FitResult:
     """Nelder-Mead on (tunable params, then x, y, yaw per view) maximising mean IoU.
 
@@ -124,6 +136,9 @@ def fit(
     k = len(tunable)
     p0 = np.array([params[t] for t in tunable], dtype=float)
     scale = np.maximum(0.1 * np.abs(p0), 0.5)
+    # Sizes must stay positive; positions (offsets, centres) may cross zero, e.g. when
+    # holes were drafted on the wrong side of a wall.
+    sized = np.array([not is_position(t) for t in tunable], dtype=bool)
     meshes: dict[tuple, trimesh.Trimesh | None] = {}
     n = {"evals": 0}
 
@@ -143,7 +158,7 @@ def fit(
     def loss(z: np.ndarray) -> float:
         n["evals"] += 1
         vals = z[:k]
-        if np.any(vals <= 0):
+        if np.any(vals[sized] <= 0):
             return 2.0
         m = mesh_for(vals)
         if m is None:
@@ -170,10 +185,17 @@ def fit(
 
     z0 = np.r_[p0, np.ravel(placements)]
     steps = np.r_[scale * 0.5, np.tile([0.75, 0.75, np.radians(4)], len(views))]
-    res = minimize(loss, z0, method="Nelder-Mead",
-                   options={"initial_simplex": np.vstack([z0, z0 + np.diag(steps)]),
-                            "xatol": 2e-3, "fatol": 1e-6, "maxfev": max_evals or 350 + 150 * len(z0),
-                            "adaptive": len(z0) > 4})
+    if k and method == "cma":
+        x_best = _cma(loss, lambda Z: _prefetch(mesh_for, [z[:k] for z in Z]), z0, steps,
+                      max_evals or 150 + 60 * len(z0))
+        res = minimize(loss, x_best, method="Nelder-Mead",  # short polish from the CMA optimum
+                       options={"initial_simplex": np.vstack([x_best, x_best + np.diag(steps * 0.15)]),
+                                "xatol": 1e-3, "fatol": 1e-6, "maxfev": 40 * len(z0), "adaptive": True})
+    else:
+        res = minimize(loss, z0, method="Nelder-Mead",
+                       options={"initial_simplex": np.vstack([z0, z0 + np.diag(steps)]),
+                                "xatol": 2e-3, "fatol": 1e-6, "maxfev": max_evals or 350 + 150 * len(z0),
+                                "adaptive": len(z0) > 4})
     vals = res.x[:k]
     pls = [tuple(float(v) for v in pl) for pl in res.x[k:].reshape(-1, 3)]
     final = dict(params) | {t: round(float(v), 3) for t, v in zip(tunable, vals)}
@@ -185,7 +207,7 @@ def fit(
         rendered.append(r)
         ious.append(soft_iou(r, obs.mask_crop))
         comps.append(compare(r, obs.mask_crop, mm_px))
-    return FitResult(
+    result = FitResult(
         params=final,
         placements=pls,
         ious=ious,
@@ -195,6 +217,52 @@ def fit(
         seconds=time.perf_counter() - t0,
         changes={t: (params[t], final[t]) for t in tunable if abs(final[t] - params[t]) >= 0.005},
     )
+    # A structural dimension shrinking to almost nothing usually means the feature was
+    # misplaced, not absent: from a bad start, deleting a wall is the quickest way to cut
+    # "extra" area. Retry with it restored, the other fitted values kept, and placements
+    # searched afresh, and keep whichever fit is better.
+    collapsed = [t for t, v0, sz in zip(tunable, p0, sized) if sz and v0 > 1.0 and final[t] < 0.3 * v0]
+    if collapsed and _retry:
+        again = fit(code, final | {t: params[t] for t in collapsed}, tunable, views,
+                    max_evals=max_evals, prior_weight=prior_weight, method=method, _retry=False)
+        if again.iou > result.iou:
+            again.changes = {t: (params[t], again.params[t]) for t in tunable
+                             if abs(again.params[t] - params[t]) >= 0.005}
+            again.evals += result.evals
+            again.seconds = time.perf_counter() - t0
+            return again
+    return result
+
+
+_POOL = ThreadPoolExecutor(max_workers=max(2, (os.cpu_count() or 4) - 2))
+
+
+def _prefetch(mesh_for, shape_vectors) -> None:
+    """Compile a batch of candidate shapes in parallel: OpenSCAD runs as a subprocess, so
+    threads overlap the ~50 ms process start-up that dominates each evaluation."""
+    seen, todo = set(), []
+    for v in shape_vectors:
+        key = tuple(np.round(v, 3))
+        if key not in seen:
+            seen.add(key)
+            todo.append(np.asarray(key))
+    list(_POOL.map(mesh_for, todo))
+
+
+def _cma(loss, prefetch, z0: np.ndarray, steps: np.ndarray, budget: int) -> np.ndarray:
+    """CMA-ES in step-normalised coordinates. Proposes a population per generation, which
+    is what lets compiles run in parallel, and explores more widely than Nelder-Mead."""
+    import cma
+
+    es = cma.CMAEvolutionStrategy(np.zeros_like(z0), 1.0,
+                                  {"maxfevals": budget, "tolfun": 1e-6, "tolx": 1e-4,
+                                   "verbose": -9, "seed": 7})
+    while not es.stop():
+        xs = es.ask()
+        zs = [z0 + x * steps for x in xs]
+        prefetch(zs)
+        es.tell(xs, [loss(z) for z in zs])
+    return z0 + np.asarray(es.result.xbest) * steps
 
 
 def sector_residuals(rendered: np.ndarray, observed: np.ndarray, mm_per_px: float, sectors: int = 12) -> list[dict]:

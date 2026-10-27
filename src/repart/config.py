@@ -13,6 +13,7 @@ load_dotenv(ROOT / ".env")
 
 BASE_URL = os.environ.get("MODEL_API_BASE_URL", "https://api.meta.ai/v1")
 SPARK_MODEL = os.environ.get("REPART_SPARK_MODEL", "muse-spark-1.3")
+WONDER_MODEL = os.environ.get("REPART_WONDER_MODEL", "muse-wonder-1.0")  # used when a fit stalls
 SAM_MODEL = "sam-3.1"
 VOICE_MODEL = "muse-voice-transcribe-1.0"
 VOICE_FILE_URL = "https://api.meta.ai/v1/asr/transcribe"
@@ -41,7 +42,8 @@ def api_key() -> str:
 
 
 def client() -> OpenAI:
-    return OpenAI(base_url=BASE_URL, api_key=api_key())
+    # Agent rounds can run minutes (Wonder, long reasoning); retry dropped connections.
+    return OpenAI(base_url=BASE_URL, api_key=api_key(), timeout=600, max_retries=4)
 
 
 def async_client() -> AsyncOpenAI:

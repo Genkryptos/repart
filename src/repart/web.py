@@ -4,19 +4,29 @@
 
 One job runs at a time (the spend cap and a single OpenSCAD process stay meaningful);
 the page polls /api/jobs/<id> for progress.
+
+Public hosting spends real API credit, so every paid endpoint is guarded (env vars):
+  REPART_ACCESS_CODE     if set, required as ?code=... in the page URL (sent as a header)
+  REPART_DAILY_CAP_USD   refuse new work once this much was spent in the last 24 h (10)
+  REPART_JOBS_PER_HOUR   per client IP (6); voice clips get 5× that
+  REPART_TRUST_PROXY     "1" behind a proxy that sets X-Forwarded-For
 """
 
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import shutil
+import sys
 import threading
 import time
 import traceback
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from . import ledger
@@ -30,6 +40,12 @@ JOBS_DIR = RUNS_DIR / "jobs"
 MAX_PHOTO_BYTES = 30 * 1024 * 1024
 PHOTO_TYPES = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
 MAX_TEXT = 600
+ACCESS_CODE = os.environ.get("REPART_ACCESS_CODE", "")
+DAILY_CAP_USD = float(os.environ.get("REPART_DAILY_CAP_USD", "10"))
+JOBS_PER_HOUR = int(os.environ.get("REPART_JOBS_PER_HOUR", "6"))
+TRUST_PROXY = os.environ.get("REPART_TRUST_PROXY") == "1"
+MAX_WAITING = 3
+JOB_TTL_S = 24 * 3600
 
 
 @dataclass
@@ -48,13 +64,41 @@ class Job:
     def public(self) -> dict:
         return {"id": self.id, "state": self.state, "message": self.message, "log": self.log[-40:],
                 "views": self.views, "rounds": self.rounds, "report": self.report,
-                "elapsed_s": round(time.time() - self.started, 1), "spent_usd": round(ledger.spent(), 3),
-                "cap_usd": ledger.CAP_USD}
+                "elapsed_s": round(time.time() - self.started, 1),
+                "spent_today_usd": round(ledger.spent_since(time.time() - 86400), 3), "daily_cap_usd": DAILY_CAP_USD}
 
 
 app = FastAPI(title="RePart")
 jobs: dict[str, Job] = {}
 run_lock = threading.Lock()
+_hits: dict[tuple[str, str], deque] = defaultdict(deque)
+
+
+def _client(request: Request) -> str:
+    if TRUST_PROXY and (fwd := request.headers.get("x-forwarded-for")):
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _guard(request: Request, kind: str, per_hour: int) -> None:
+    """Access code, per-IP hourly limit and the 24 h spend cap, before any paid work."""
+    if ACCESS_CODE and not secrets.compare_digest(request.headers.get("x-access-code", ""), ACCESS_CODE):
+        raise HTTPException(403, "This demo needs an access code. Use the full link you were given.")
+    now = time.time()
+    q = _hits[(kind, _client(request))]
+    while q and q[0] < now - 3600:
+        q.popleft()
+    if len(q) >= per_hour:
+        raise HTTPException(429, "That's a lot of parts in an hour. Try again a little later.")
+    if ledger.spent_since(now - 86400) >= DAILY_CAP_USD:
+        raise HTTPException(503, "Today's demo budget is used up. Try again tomorrow.")
+    q.append(now)
+
+
+def _cleanup() -> None:
+    cutoff = time.time() - JOB_TTL_S
+    for jid in [j for j, job in jobs.items() if job.started < cutoff and job.state not in ("queued", "running")]:
+        shutil.rmtree(jobs.pop(jid).dir, ignore_errors=True)
 
 
 def _run(job: Job) -> None:
@@ -67,7 +111,7 @@ def _run(job: Job) -> None:
         def on_round(r) -> None:
             entry = {"round": r.index, "done": r.draft["done"], "reasoning": r.draft["reasoning"],
                      "compile_error": r.compile_error, "questions": r.draft["questions"],
-                     "cost_usd": r.cost_usd}
+                     "cost_usd": r.cost_usd, "model": r.model}
             if r.hybrid:
                 entry |= {"spark_iou": r.spark_only.iou, "iou": r.hybrid.iou, "ious": r.hybrid.ious,
                           "edge_mm": r.hybrid.chamfer_mm,
@@ -82,9 +126,9 @@ def _run(job: Job) -> None:
             job.state, job.message = "retake", str(e)
         except ledger.SpendCapError as e:
             job.state, job.message = "error", f"Stopped by the spend cap: {e}"
-        except Exception as e:  # surface, don't crash the server
-            job.state, job.message = "error", f"{type(e).__name__}: {e}"
-            job.log.append(traceback.format_exc()[-1500:])
+        except Exception as e:  # surface, don't crash the server; details stay in the server log
+            job.state, job.message = "error", "RePart hit an internal error on this part. Try again or try other photos."
+            print(f"job {job.id} failed: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
 
 
 def _clean(text: str, name: str) -> str:
@@ -101,6 +145,7 @@ def index() -> str:
 
 @app.post("/api/jobs")
 async def create_job(
+    request: Request,
     photos: list[UploadFile] | None = File(None),
     part: str = Form(...),
     describe: str = Form(""),
@@ -108,6 +153,10 @@ async def create_job(
     material: str = Form("PETG"),
     reuse: str = Form(""),
 ) -> dict:
+    _cleanup()
+    if sum(j.state == "queued" for j in jobs.values()) >= MAX_WAITING:
+        raise HTTPException(503, "RePart is busy with other parts. Try again in a minute.")
+    _guard(request, "job", JOBS_PER_HOUR)
     part = _clean(part, "Part name")
     if not part or len(part.split()) > 6:
         raise HTTPException(400, "Name the part in 1-6 words, like 'black plastic knob'.")
@@ -167,10 +216,11 @@ def job_file(jid: str, path: str) -> FileResponse:
 
 
 @app.post("/api/transcribe")
-async def transcribe_audio(audio: UploadFile = File(...)) -> dict:
+async def transcribe_audio(request: Request, audio: UploadFile = File(...)) -> dict:
     """Spoken description → text, via Muse Voice Transcribe."""
     from .voice import VoiceError, transcribe
 
+    _guard(request, "voice", JOBS_PER_HOUR * 5)
     data = await audio.read()
     if not data or len(data) > 10 * 1024 * 1024:
         raise HTTPException(400, "Recording is empty or over 10 MB.")

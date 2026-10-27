@@ -24,8 +24,10 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;wi
 @media (prefers-color-scheme:dark){button.primary{color:#0b1b2c}}
 button:disabled{opacity:.5;cursor:default}
 .slots{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.slot{border:1.5px dashed var(--line);border-radius:12px;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:13px;color:var(--muted);position:relative;overflow:hidden;cursor:pointer;padding:8px}
+.slot{border:1.5px dashed var(--muted);border-radius:12px;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:13px;color:var(--muted);position:relative;overflow:hidden;cursor:pointer;padding:8px}
 .slot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.slot.filled{border-style:solid;border-color:var(--ok)}
+.slot.filled::after{content:"Added · tap to retake";position:absolute;left:6px;bottom:6px;font-size:11px;background:var(--card);color:var(--ok);padding:2px 7px;border-radius:999px}
 .slot b{color:var(--ink);font-size:14px}
 .slot input{display:none}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
@@ -124,6 +126,11 @@ import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 const $ = (id) => document.getElementById(id);
+// Optional demo access code: arrives as ?code=..., kept for the tab, sent on paid requests.
+const urlCode = new URLSearchParams(location.search).get("code");
+if (urlCode) { try { sessionStorage.setItem("repart-code", urlCode); } catch {} }
+const accessCode = urlCode || (() => { try { return sessionStorage.getItem("repart-code") || ""; } catch { return ""; } })();
+const authHeaders = accessCode ? { "X-Access-Code": accessCode } : {};
 const files = [null, null];
 let job = null, poll = null, lastRounds = -1, viewerReady = false;
 
@@ -133,6 +140,7 @@ for (const [i, id] of ["slot1", "slot2"].entries()) {
     const f = input.files[0];
     if (!f) return;
     files[i] = f;
+    slot.classList.add("filled");
     slot.querySelector("img")?.remove();
     if (/^image\/(jpeg|png|webp)$/.test(f.type)) {
       const img = document.createElement("img");
@@ -164,7 +172,7 @@ async function start(reuse = null, extraAnswers = "") {
   if (reuse) fd.append("reuse", reuse);
   $("go").disabled = true;
   try {
-    const r = await fetch("/api/jobs", { method: "POST", body: fd });
+    const r = await fetch("/api/jobs", { method: "POST", body: fd, headers: authHeaders });
     const body = await r.json();
     if (!r.ok) throw new Error(body.detail || "Upload failed.");
     job = body.id;
@@ -187,7 +195,7 @@ function renderRound(r) {
   div.className = "round";
   const h = document.createElement("h3");
   const left = document.createElement("span");
-  left.textContent = `Round ${r.round + 1}${r.done ? " · done" : ""}`;
+  left.textContent = `Round ${r.round + 1}${r.model && r.model.includes("wonder") ? " · Muse Wonder" : ""}${r.done ? " · done" : ""}`;
   const right = document.createElement("span");
   right.textContent = r.iou != null ? `${pct(r.spark_iou)} → ${pct(r.iou)}` : (r.compile_error ? "code error, retrying" : "");
   h.append(left, right);
@@ -214,7 +222,7 @@ async function refresh() {
   const r = await fetch(`/api/jobs/${job}`);
   if (!r.ok) return;
   const s = await r.json();
-  $("spend").textContent = `Spent $${s.spent_usd.toFixed(2)} of the $${s.cap_usd.toFixed(0)} cap`;
+  $("spend").textContent = `Demo budget today: $${s.spent_today_usd.toFixed(2)} of $${s.daily_cap_usd.toFixed(0)}`;
   if (s.views.length !== $("views").children.length) {
     $("views").innerHTML = "";
     for (const [i, v] of s.views.entries()) {
@@ -311,6 +319,7 @@ function loadModel(url) {
 function setSlot(i, file) {
   files[i] = file;
   const slot = $(["slot1", "slot2"][i]);
+  slot.classList.add("filled");
   slot.querySelector("img")?.remove();
   const img = document.createElement("img");
   img.src = URL.createObjectURL(file);
@@ -354,7 +363,7 @@ if (navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
           const fd = new FormData();
           fd.append("audio", new Blob(chunks, { type }), type.includes("mp4") ? "speech.mp4" : "speech.webm");
           try {
-            const r = await fetch("/api/transcribe", { method: "POST", body: fd });
+            const r = await fetch("/api/transcribe", { method: "POST", body: fd, headers: authHeaders });
             const body = await r.json();
             if (!r.ok) throw new Error(body.detail || "Transcription failed.");
             field.value = [field.value.trim(), body.text].filter(Boolean).join(btn.dataset.for === "answers" ? "\n" : " ");

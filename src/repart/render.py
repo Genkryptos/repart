@@ -52,6 +52,10 @@ def scad_to_mesh(code: str, params: dict | None = None, timeout: float = 60) -> 
             for d in defs:
                 cmd += ["-D", d]
             r = subprocess.run(cmd + [str(src)], capture_output=True, text=True, timeout=timeout)
+            if r.returncode != 0 and "backend" in (r.stderr or "").lower():
+                # Older OpenSCAD without Manifold: same output, just slower (CGAL).
+                r = subprocess.run([c for c in cmd if c not in ("--backend", "manifold")] + [str(src)],
+                                   capture_output=True, text=True, timeout=timeout)
         if r.returncode != 0 or not out.exists():
             raise ScadError((r.stderr or r.stdout).strip()[-1500:])
     mesh = trimesh.load_mesh(out, file_type="stl")

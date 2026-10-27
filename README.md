@@ -38,6 +38,21 @@ uv run repart serve --host 0.0.0.0  # reach it from a phone on the same Wi-Fi
 
 Capture (two photo slots, description, optional measurements, Speak buttons via Muse Voice Transcribe) → live fitting view (overlays per round, overlap and edge error, Spark's reasoning) → result (3D preview, every dimension labelled by where it came from, STL/SCAD download, follow-up questions that re-run the part). "Try a sample part" loads bundled photos, so you can try it without a broken part. The microphone needs https on a phone; localhost is fine.
 
+### Hosting
+
+```bash
+docker build -t repart .
+docker run -p 8000:8000 -e MODEL_API_KEY=... -e REPART_ACCESS_CODE=pick-one repart
+```
+
+A public URL spends real API credit, so paid endpoints are guarded: an optional access code (share `https://host/?code=...`), per-IP hourly limits (`REPART_JOBS_PER_HOUR`, default 6), a 24-hour budget (`REPART_DAILY_CAP_USD`, default $10) under the overall cap, a short queue, and day-old jobs deleted.
+
+## Tests
+
+```bash
+uv run pytest -q    # offline, ~1 s: camera recovery (incl. steep shots), SCAD helpers, fallbacks, lint, eval, web guards
+```
+
 ## Measure accuracy
 
 Each eval part is a folder in `data/parts/<id>/` with the photo and a `part.json` holding caliper readings (format in `src/repart/evaluate.py`).

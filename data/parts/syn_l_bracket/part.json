@@ -1,0 +1,34 @@
+{
+  "photos": [
+    "photo1.jpg",
+    "photo2.jpg"
+  ],
+  "concept": "black plastic bracket",
+  "description": "Small L-shaped mounting bracket with two screw holes in the base.",
+  "answers": [],
+  "material": "PETG",
+  "calipers": [
+    {
+      "name": "base length",
+      "kind": "length",
+      "mm": 40.0
+    },
+    {
+      "name": "width",
+      "kind": "width",
+      "mm": 20.0
+    },
+    {
+      "name": "height",
+      "kind": "height",
+      "mm": 20.0
+    },
+    {
+      "name": "screw hole",
+      "kind": "hole_diameter_at",
+      "z": 1.5,
+      "mm": 5.0
+    }
+  ],
+  "truth_scad": "$fn=96;\ndifference(){\n  union(){ translate([-20,-10,0]) cube([40,20,3]); translate([17,-10,0]) cube([3,20,20]); }\n  for (x=[-12,4]) translate([x,0,-1]) cylinder(d=5, h=5);\n}"
+}

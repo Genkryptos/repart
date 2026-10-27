@@ -34,6 +34,13 @@ def spent() -> float:
     return sum(json.loads(line)["usd"] for line in LEDGER.read_text().splitlines() if line)
 
 
+def spent_since(t0: float) -> float:
+    if not LEDGER.exists():
+        return 0.0
+    rows = (json.loads(line) for line in LEDGER.read_text().splitlines() if line)
+    return sum(r["usd"] for r in rows if r["t"] >= t0)
+
+
 def ensure(estimate_usd: float, what: str) -> None:
     total = spent()
     if total + estimate_usd > CAP_USD:

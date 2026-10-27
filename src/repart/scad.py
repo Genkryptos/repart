@@ -22,5 +22,8 @@ def bake_params(code: str, params: dict[str, float]) -> str:
 
 
 def declared(code: str) -> set[str]:
-    """Names assigned at the start of a line (top-level parameters, roughly)."""
-    return set(re.findall(r"^([A-Za-z_]\w*)\s*=", code, re.MULTILINE))
+    """Names assigned at the start of a line, indented or not (top-level parameters, roughly).
+
+    May also catch a variable local to a module; tuning one is a harmless no-op.
+    """
+    return set(re.findall(r"^\s*([A-Za-z_$]\w*)\s*=(?!=)", code, re.MULTILINE))

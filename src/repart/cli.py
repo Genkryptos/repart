@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("--answer", action="append", help="a measurement the photo can't show (repeatable)")
     mk.add_argument("--material", default="PETG", choices=sorted(FIT_GAPS))
     mk.add_argument("--fit-gap", type=float, help="radial clearance for mating holes, mm (overrides material)")
-    mk.add_argument("--rounds", type=int, default=4)
+    mk.add_argument("--rounds", type=int, default=5)
     mk.add_argument("--focal35", type=float, help="35 mm-equivalent focal length if the photo lacks EXIF")
     mk.add_argument("--sheet", default="white paper sheet", help="SAM phrase for the reference sheet")
     mk.add_argument("--out", type=Path)

@@ -23,7 +23,7 @@ import numpy as np
 from . import ledger
 from . import lint
 from .compare import residual_overlay
-from .config import SPARK_MODEL, client
+from .config import SPARK_MODEL, WONDER_MODEL, client
 from .fit import FitResult, Observation, fit, sector_residuals
 from .render import ScadError, scad_to_mesh
 from .scad import bake_params, declared
@@ -68,8 +68,15 @@ Division of labour:
   never in `tunable`. A single tilted view trades height against width, so a locked measurement
   makes every other fitted number more accurate.
 
+Use the user's description to choose the overall shape: "L-shaped" means a wall standing up from
+a base, "C-shaped" an open ring, and so on. A large "missing" region in a steep photo usually
+means a vertical feature (wall, boss, tab) your model doesn't have yet; add it rather than
+stretching the numbers.
+
 Code rules:
 - Declare every dimension as a top-level `name = value;` (mm), keep names stable across rounds.
+- Name parameters that *place* a feature with `_x`, `_y`, `offset` or `cx`/`cy` (these may go
+  negative); every other parameter is a size and is kept positive by the optimiser.
 - Part rests on z=0, centred on the origin in x/y. $fn >= 96 for round features.
 - Declare `fit_gap = 0.2;` and add it to every hole, socket or slot that mates with another
   part (e.g. `d = shaft_d + 2 * fit_gap`). The loop sets it to 0 while matching the photo and
@@ -105,6 +112,7 @@ class Round:
     residuals: list[list[dict]] = field(default_factory=list)  # per view
     lint: list[str] = field(default_factory=list)
     spark_seconds: float = 0.0
+    model: str = SPARK_MODEL
     cost_usd: float = 0.0
 
 
@@ -164,17 +172,20 @@ def run(
     rounds: list[Round] = []
     placements = None
     for i in range(max_rounds):
-        ledger.ensure(0.05, f"Spark round {i}")
+        model = WONDER_MODEL if _stalled(rounds) else SPARK_MODEL
+        if model != SPARK_MODEL:
+            log(f"   fit has stalled below IoU {STALL_IOU}; escalating this round to {model}")
+        ledger.ensure(0.05 if model == SPARK_MODEL else 0.40, f"{model} round {i}")
         t0 = time.perf_counter()
-        resp = api.chat.completions.create(model=SPARK_MODEL, reasoning_effort=reasoning_effort,
+        resp = api.chat.completions.create(model=model, reasoning_effort=reasoning_effort,
                                            response_format=SCHEMA, messages=messages)
-        cost = ledger.chat_cost(SPARK_MODEL, resp.usage)
-        ledger.record(SPARK_MODEL, cost, stage="agent", round=i)
+        cost = ledger.chat_cost(model, resp.usage)
+        ledger.record(model, cost, stage="agent", round=i)
         raw = resp.choices[0].message.content
         draft = json.loads(raw)
-        r = Round(i, draft, spark_seconds=time.perf_counter() - t0, cost_usd=cost)
+        r = Round(i, draft, spark_seconds=time.perf_counter() - t0, cost_usd=cost, model=model)
         rounds.append(r)
-        log(f"\n== round {i}: Spark {r.spark_seconds:.0f}s ${cost:.4f}  done={draft['done']}  "
+        log(f"\n== round {i}: {model} {r.spark_seconds:.0f}s ${cost:.4f}  done={draft['done']}  "
             f"tunable={draft['tunable']}  measured={draft['measured']}")
         log("   " + draft["reasoning"][:260].replace("\n", " "))
 
@@ -215,6 +226,16 @@ def run(
             on_round(r)
         messages += [{"role": "assistant", "content": raw}, {"role": "user", "content": _feedback(r, views)}]
     return rounds
+
+
+STALL_IOU = 0.97
+
+
+def _stalled(rounds: list[Round]) -> bool:
+    """Two fitted rounds in a row below STALL_IOU with < 0.01 gain: the structure is
+    probably wrong, which is Muse Wonder's job rather than another Spark nudge."""
+    fitted = [r.hybrid.iou for r in rounds if r.hybrid]
+    return len(fitted) >= 2 and fitted[-1] < STALL_IOU and fitted[-1] - fitted[-2] < 0.01
 
 
 def best_round(rounds: list[Round]) -> Round | None:

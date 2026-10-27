@@ -1,0 +1,23 @@
+{
+  "photos": [
+    "photo1.jpg",
+    "photo2.jpg"
+  ],
+  "concept": "black plastic clip",
+  "description": "C-shaped clip from a cooler; it snaps onto a pipe.",
+  "answers": [],
+  "material": "PETG",
+  "calipers": [
+    {
+      "name": "outer diameter",
+      "kind": "length",
+      "mm": 20.0
+    },
+    {
+      "name": "height",
+      "kind": "height",
+      "mm": 8.0
+    }
+  ],
+  "truth_scad": "$fn=128;\ndifference(){ cylinder(d=20, h=8); translate([0,0,-1]) cylinder(d=14, h=10); translate([-3,4,-1]) cube([6,10,10]); }"
+}

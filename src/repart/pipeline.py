@@ -14,6 +14,7 @@ from . import agent, ledger
 from .camera import CaptureError, focal_from_35mm, sheet_corners, solve_camera
 from .compare import residual_overlay
 from .fit import Observation
+from .holes import carve_holes
 from .photo import Photo, load_photo
 from .render import scad_to_mesh
 from .sam import ImageMask, segment_photo
@@ -34,7 +35,7 @@ class PartRequest:
     sheet_concept: str = "white paper sheet"
     material: str = "PETG"
     fit_gap: float | None = None
-    max_rounds: int = 4
+    max_rounds: int = 5  # Spark usually finishes in 2; a stalled fit escalates to Wonder
     focal35: float | None = None  # override when photos have no EXIF
 
 
@@ -42,6 +43,7 @@ def _inside(poly: np.ndarray, pt: tuple[float, float]) -> bool:
     return cv2.pointPolygonTest(poly.astype(np.float32), pt, False) >= 0
 
 
+SHEET_FALLBACKS = ["white paper", "sheet of paper"]
 SHAPE_WORDS = {"round", "circular", "square", "rectangular", "flat", "small", "big", "large", "tiny",
                "long", "short", "thin", "thick", "broken", "old", "cracked"}
 
@@ -72,6 +74,14 @@ def _pick_part(masks: list[ImageMask], corners: np.ndarray, concept: str, which:
 def observe(photo: Photo, req: PartRequest, which: str, log=print) -> tuple[Observation, dict]:
     """SAM masks + camera for one photo, with retake messages for anything unmeasurable."""
     sheets, parts = asyncio.run(_segment(photo, req))
+    # SAM's text grounding is phrase-sensitive (one photo found nothing for "white paper sheet"
+    # but the full sheet for "white paper"), so the sheet gets fallbacks too.
+    for alt in SHEET_FALLBACKS:
+        if sheets:
+            break
+        if alt != req.sheet_concept:
+            log(f"{which}: no sheet for '{req.sheet_concept}', trying '{alt}'")
+            sheets = asyncio.run(segment_photo(photo.path, alt, photo.width, photo.height))
     tried = req.concept
     for alt in concept_fallbacks(req.concept)[1:]:
         if parts:
@@ -94,14 +104,17 @@ def observe(photo: Photo, req: PartRequest, which: str, log=print) -> tuple[Obse
         raise CaptureError(f"{which}: can't work out the camera. Tilt the phone 15-20° "
                            "instead of shooting straight down.") from e
     part = _pick_part(parts, corners, req.concept, which)
-    obs = Observation(photo.image, part.mask, cam)
+    # SAM masks are solid; through-holes show the sheet, so carve those back out.
+    mask, holes = carve_holes(part.mask, photo.image, sheet.mask)
+    obs = Observation(photo.image, mask, cam)
     log(f"{which}: {photo.width}×{photo.height}, focal {'EXIF ' + str(f35) if f35 else 'estimated'}; "
         f"corner fit {cam.reproj_px:.2f} px, camera {cam.center[2]:.0f} mm up, tilt {obs.tilt_deg():.0f}°; "
-        f"part {part.area:.0f} px, SAM downsample {part.downsample:.2f}×")
+        f"part {part.area:.0f} px, SAM downsample {part.downsample:.2f}×; "
+        f"{holes.holes} through-hole(s) carved{' (' + holes.skipped + ')' if holes.skipped else ''}")
     info = {"height_mm": float(cam.center[2]), "tilt_deg": obs.tilt_deg(), "focal_px": cam.focal,
             "focal_source": "exif" if focal_px else "estimated", "corner_reproj_px": cam.reproj_px,
             "sam_part_downsample": part.downsample, "sam_part_confidence": part.confidence,
-            "sam_part_masks": len(parts)}
+            "sam_part_masks": len(parts), "holes_carved": holes.holes}
     return obs, info
 
 
@@ -153,7 +166,7 @@ def make_part(req: PartRequest, log=print, on_view=None, on_round=None) -> dict:
                     "hybrid_iou": r.hybrid.iou if r.hybrid else None,
                     "edge_mm": r.hybrid.chamfer_mm if r.hybrid else None,
                     "changes": {k: list(v) for k, v in r.hybrid.changes.items()} if r.hybrid else {},
-                    "spark_seconds": r.spark_seconds, "cost_usd": r.cost_usd} for r in rounds],
+                    "model": r.model, "spark_seconds": r.spark_seconds, "cost_usd": r.cost_usd} for r in rounds],
         "best_round": best.index,
         "iou": best.hybrid.iou,
         "edge_mm": best.hybrid.chamfer_mm,
