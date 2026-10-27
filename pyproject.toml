@@ -1,0 +1,27 @@
+[project]
+name = "repart"
+version = "0.1.0"
+description = "Photo-to-CAD replacement parts with a closed-loop Muse Spark agent"
+readme = "README.md"
+authors = [
+    { name = "Genkryptos", email = "entrepreneur.mayank.sahu@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "imageio-ffmpeg>=0.6.0",
+    "matplotlib>=3.11.2",
+    "meta-sam-parser>=0.1.0",
+    "numpy>=2.5.4",
+    "openai>=3.38.0",
+    "opencv-python-headless>=5.0.0.93",
+    "pillow>=13.0.0",
+    "python-dotenv>=1.2.4",
+    "requests>=2.34.2",
+    "scipy>=1.18.1",
+    "trimesh>=5.2.0",
+    "websockets>=17.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
