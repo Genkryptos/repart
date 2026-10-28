@@ -7,3 +7,5 @@ data/synthetic/
 .DS_Store
 # Third-party photos for private testing only; never commit or ship
 data/external/
+ios/**/xcuserdata/
+ios/**/*.xcuserstate

@@ -63,6 +63,8 @@ class Job:
 
     def public(self) -> dict:
         return {"id": self.id, "state": self.state, "message": self.message, "log": self.log[-40:],
+                "part": self.request.concept, "describe": self.request.description,
+                "answers": "\n".join(self.request.answers), "material": self.request.material,
                 "views": self.views, "rounds": self.rounds, "report": self.report,
                 "elapsed_s": round(time.time() - self.started, 1),
                 "spent_today_usd": round(ledger.spent_since(time.time() - 86400), 3), "daily_cap_usd": DAILY_CAP_USD}
@@ -143,6 +145,16 @@ def index() -> str:
     return (STATIC / "index.html").read_text()
 
 
+@app.get("/logo.svg")
+def logo() -> FileResponse:
+    return FileResponse(STATIC / "logo.svg", media_type="image/svg+xml")
+
+
+@app.get("/apple-touch-icon.png")
+def touch_icon() -> FileResponse:
+    return FileResponse(STATIC / "apple-touch-icon.png", media_type="image/png")
+
+
 @app.post("/api/jobs")
 async def create_job(
     request: Request,
@@ -164,8 +176,6 @@ async def create_job(
         raise HTTPException(400, f"Material must be one of {', '.join(FIT_GAPS)}.")
     jid = secrets.token_hex(6)
     jdir = JOBS_DIR / jid
-    inputs = jdir / "inputs"
-    inputs.mkdir(parents=True)
     paths = []
     if reuse:  # re-run with answers: same photos, SAM results come from cache
         src = jobs.get(reuse)
@@ -176,6 +186,7 @@ async def create_job(
         photos = photos or []
         if not 1 <= len(photos) <= 3:
             raise HTTPException(400, "Upload 1 to 3 photos.")
+        uploads = []
         for k, up in enumerate(photos):
             ext = Path(up.filename or "").suffix.lower()
             if ext not in PHOTO_TYPES:
@@ -183,7 +194,11 @@ async def create_job(
             data = await up.read()
             if len(data) > MAX_PHOTO_BYTES:
                 raise HTTPException(400, f"Photo {k + 1} is over 30 MB.")
-            p = inputs / f"photo{k + 1}{ext}"
+            uploads.append((ext, data))
+        # Only a valid request gets a job folder.
+        (jdir / "inputs").mkdir(parents=True)
+        for k, (ext, data) in enumerate(uploads):
+            p = jdir / "inputs" / f"photo{k + 1}{ext}"
             p.write_bytes(data)
             paths.append(p)
     ans = [a.strip() for a in _clean(answers, "Answers").splitlines() if a.strip()]

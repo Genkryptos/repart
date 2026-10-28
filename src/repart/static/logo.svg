@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="RePart">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c2b23"/><stop offset="1" stop-color="#0a0f0c"/></linearGradient>
+    <mask id="body"><circle cx="512.0" cy="512.0" r="340" fill="#fff"/><path d="M550.7 330.1 L584.8 169.6 A350 350 0 0 1 861.8 499.8 L697.9 505.5 A186 186 0 0 0 550.7 330.1 Z" fill="#000"/><path d="M570.0 440.6 A92 92 0 1 0 570.0 583.4 Z" fill="#000"/></mask>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="#e8ede9" mask="url(#body)"/>
+  <path d="M589.8 297.0 L626.0 161.7 A340 340 0 0 1 876.8 460.5 L737.3 472.7 A200 200 0 0 0 589.8 297.0 Z" fill="#30d158"/>
+</svg>

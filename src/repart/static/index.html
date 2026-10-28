@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RePart</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <style>
 :root{--bg:#f6f5f1;--card:#fff;--ink:#1d1d1b;--muted:#6b6a64;--line:#e4e2da;--accent:#185fa5;--accent-bg:#e6f1fb;--ok:#3b6d11;--ok-bg:#eaf3de;--bad:#a32d2d;--bad-bg:#fcebeb;--miss:#e24b4a;--extra:#378add;--match:#639922}
 @media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#22221f;--ink:#efede6;--muted:#a3a198;--line:#3a3935;--accent:#85b7eb;--accent-bg:#0c2c4c;--ok:#97c459;--ok-bg:#1c2c0c;--bad:#f09595;--bad-bg:#3a1414}}
@@ -11,6 +13,7 @@
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:560px;margin:0 auto;padding:16px 16px 48px}
 header{display:flex;align-items:baseline;gap:10px;margin:8px 0 18px}
+header .logo{align-self:center;border-radius:7px;flex:none}
 header h1{font-size:22px;font-weight:600;margin:0}
 header span{color:var(--muted);font-size:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
@@ -65,7 +68,7 @@ footer{color:var(--muted);font-size:12px;text-align:center;margin-top:20px}
 </head>
 <body>
 <main>
-<header><h1>RePart</h1><span>photo of a broken part → printable replacement</span></header>
+<header><img class="logo" src="/logo.svg" alt="" width="30" height="30"><h1>RePart</h1><span>photo of a broken part → printable replacement</span></header>
 
 <section id="capture" class="card">
   <h2>1. Photograph the part</h2>
@@ -222,6 +225,9 @@ async function refresh() {
   const r = await fetch(`/api/jobs/${job}`);
   if (!r.ok) return;
   const s = await r.json();
+  if (!$("part").value) {  // opened from a link (?job=...), e.g. by the iPhone app: keep the inputs for "Update the part"
+    $("part").value = s.part; $("describe").value = s.describe; $("answers").value = s.answers; $("material").value = s.material;
+  }
   $("spend").textContent = `Demo budget today: $${s.spent_today_usd.toFixed(2)} of $${s.daily_cap_usd.toFixed(0)}`;
   if (s.views.length !== $("views").children.length) {
     $("views").innerHTML = "";
@@ -375,6 +381,16 @@ if (navigator.mediaDevices?.getUserMedia && window.MediaRecorder) {
       } catch (e) { fail(err, "Microphone unavailable. On a phone this needs the https address."); }
     });
   }
+}
+
+// The iPhone capture app uploads the photos itself, then opens /?job=<id> to follow the fit here.
+const urlJob = new URLSearchParams(location.search).get("job");
+if (urlJob && /^[0-9a-f]{12}$/.test(urlJob)) {
+  job = urlJob;
+  $("status").innerHTML = '<span class="spin"></span>Finding the sheet and the part…';
+  show("fitting");
+  refresh();
+  poll = setInterval(refresh, 1200);
 }
 
 $("go").addEventListener("click", () => start());
